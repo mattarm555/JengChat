@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-cd "$REPO_ROOT"
+cd "$SCRIPT_DIR"
 
-echo "Building JENG ARENA Phase 1..."
+echo "Building JENG ARENA..."
+
+windres arena_icon.rc -O coff -o arena_icon_res.o
 
 g++ -std=c++17 \
-    prototypes/arena3d/arena_demo.cpp \
+    arena_demo.cpp \
+    win_icon.cpp \
+    arena_icon_res.o \
     -I. \
-    -o prototypes/arena3d/JengArenaDemo.exe \
+    -o JengArenaDemo.exe \
     -lraylib \
     -lopengl32 \
     -lgdi32 \
-    -lwinmm
+    -lwinmm \
+    -lws2_32 \
+    -pthread
 
-echo
-echo "Build complete."
-echo "Run: ./prototypes/arena3d/JengArenaDemo.exe"
+rm -f arena_icon_res.o
+
+echo "Built: $SCRIPT_DIR/JengArenaDemo.exe"

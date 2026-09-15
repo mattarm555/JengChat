@@ -132,6 +132,13 @@ struct ChessClientState
     std::string status = "Challenge a player to start Chess.";
 
     int selectedSquare = -1;
+
+    // Legal destinations for the currently selected piece.
+    // These are sent by the authoritative server so highlights always
+    // match the moves the server will actually accept.
+    std::vector<int> legalMoves;
+    int legalMoveSource = -1;
+    bool legalMovesLoaded = false;
 };
 
 struct PokerClientState

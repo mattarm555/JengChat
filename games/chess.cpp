@@ -6,6 +6,7 @@
 #include "../ui/command_popup.h"
 #include "../ui/ui_common.h"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <map>
@@ -43,6 +44,57 @@ namespace
         result += (char)('a' + col);
         result += (char)('8' - row);
         return result;
+    }
+
+
+    bool IsLegalDestination(
+        const ChessClientState& chess,
+        int boardIndex
+    )
+    {
+        if (
+            chess.selectedSquare < 0 ||
+            chess.legalMoveSource != chess.selectedSquare ||
+            !chess.legalMovesLoaded
+        )
+        {
+            return false;
+        }
+
+        return find(
+            chess.legalMoves.begin(),
+            chess.legalMoves.end(),
+            boardIndex
+        ) != chess.legalMoves.end();
+    }
+
+
+    void SelectChessPiece(
+        ChessClientState& chess,
+        int boardIndex
+    )
+    {
+        chess.selectedSquare = boardIndex;
+        chess.legalMoves.clear();
+        chess.legalMoveSource = boardIndex;
+        chess.legalMovesLoaded = false;
+
+        int row = boardIndex / 8;
+        int col = boardIndex % 8;
+
+        string request =
+            "CHESS_LEGAL|" +
+            SquareName(row, col);
+
+        if (!NetSendLine(request))
+        {
+            chess.status = NetLastError();
+            chess.selectedSquare = -1;
+            chess.legalMoveSource = -1;
+            return;
+        }
+
+        chess.status = "Loading legal moves...";
     }
 
     int BoardIndexForDisplay(
@@ -258,16 +310,30 @@ void DrawChessPanel(
                 }
                 else if (IsUsersPiece(chess, clickedPiece))
                 {
-                    chess.selectedSquare = clickedIndex;
-                    chess.status = "Choose a destination square.";
+                    SelectChessPiece(
+                        chess,
+                        clickedIndex
+                    );
                 }
             }
             else
             {
+                // Clicking another one of your pieces simply changes
+                // selection and requests that piece's true legal moves.
                 if (IsUsersPiece(chess, clickedPiece))
                 {
-                    chess.selectedSquare = clickedIndex;
-                    chess.status = "Choose a destination square.";
+                    SelectChessPiece(
+                        chess,
+                        clickedIndex
+                    );
+                }
+                else if (!chess.legalMovesLoaded)
+                {
+                    chess.status = "Loading legal moves...";
+                }
+                else if (!IsLegalDestination(chess, clickedIndex))
+                {
+                    chess.status = "That square is not a legal move.";
                 }
                 else
                 {
@@ -277,10 +343,15 @@ void DrawChessPanel(
                     string from = SquareName(fromRow, fromCol);
                     string to = SquareName(row, col);
 
-                    string packet = "CHESS_MOVE|" + from + "|" + to;
+                    string packet =
+                        "CHESS_MOVE|" +
+                        from +
+                        "|" +
+                        to;
 
-                    // Queen promotion by default for the first graphical pass.
-                    char movingPiece = chess.board[chess.selectedSquare];
+                    // Queen promotion by default for this graphical pass.
+                    char movingPiece =
+                        chess.board[chess.selectedSquare];
 
                     if (
                         (movingPiece == 'P' && row == 0) ||
@@ -291,11 +362,18 @@ void DrawChessPanel(
                     }
 
                     if (!NetSendLine(packet))
+                    {
                         chess.status = NetLastError();
+                    }
                     else
+                    {
                         chess.status = "Move sent...";
+                    }
 
                     chess.selectedSquare = -1;
+                    chess.legalMoves.clear();
+                    chess.legalMoveSource = -1;
+                    chess.legalMovesLoaded = false;
                 }
             }
         }
@@ -327,6 +405,60 @@ void DrawChessPanel(
                 displayRow,
                 displayCol
             );
+
+            bool legalDestination =
+                IsLegalDestination(
+                    chess,
+                    actualIndex
+                );
+
+            if (legalDestination)
+            {
+                char target =
+                    (
+                        actualIndex >= 0 &&
+                        actualIndex < (int)chess.board.size()
+                    )
+                    ? chess.board[actualIndex]
+                    : '.';
+
+                bool isCapture = target != '.';
+
+                // A soft tint makes every destination visible while the
+                // center dot / capture outline makes the type obvious.
+                DrawRectangle(
+                    (int)cell.x,
+                    (int)cell.y,
+                    (int)cell.width,
+                    (int)cell.height,
+                    isCapture
+                        ? Color{235, 64, 64, 45}
+                        : Color{70, 210, 120, 38}
+                );
+
+                if (isCapture)
+                {
+                    DrawRectangleLinesEx(
+                        Rectangle{
+                            cell.x + 3.0f,
+                            cell.y + 3.0f,
+                            cell.width - 6.0f,
+                            cell.height - 6.0f
+                        },
+                        3.0f,
+                        JENG_RED
+                    );
+                }
+                else
+                {
+                    DrawCircle(
+                        (int)(cell.x + cell.width / 2.0f),
+                        (int)(cell.y + cell.height / 2.0f),
+                        6.0f,
+                        SUCCESS
+                    );
+                }
+            }
 
             if (actualIndex == chess.selectedSquare)
             {
@@ -410,15 +542,15 @@ void DrawChessPanel(
         DrawText("No active match.", (int)infoX, (int)board.y + 29, 14, TEXT_MUTED);
     }
 
-    DrawText("TURN", (int)infoX, (int)board.y + 91, 15, JENG_YELLOW);
+    DrawText("TURN", (int)infoX, (int)board.y + 91, 18, JENG_YELLOW);
 
     string turnText = chess.turn.empty() ? "-" : chess.turn;
     Color turnColor = chess.turn == app.username ? SUCCESS : TEXT_MAIN;
 
-    DrawText(turnText.c_str(), (int)infoX, (int)board.y + 116, 17, turnColor);
+    DrawText(turnText.c_str(), (int)infoX, (int)board.y + 118, 24, turnColor);
 
-    DrawText("STATUS", (int)infoX, (int)board.y + 158, 15, JENG_YELLOW);
-    DrawText(chess.status.c_str(), (int)infoX, (int)board.y + 183, 14, TEXT_MUTED);
+    DrawText("STATUS", (int)infoX, (int)board.y + 166, 15, JENG_YELLOW);
+    DrawText(chess.status.c_str(), (int)infoX, (int)board.y + 191, 14, TEXT_MUTED);
 
     if (!chess.active)
     {

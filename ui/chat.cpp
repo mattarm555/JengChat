@@ -36,7 +36,7 @@ void DrawChatPanel(AppState& app, Rectangle bounds, bool interactionsBlocked)
         bounds.height - 118
     };
 
-    DrawRectangleRounded(messagesArea, 0.02f, 6, PANEL_ALT);
+    DrawRectangleRounded(messagesArea, 0.02f, 6, CHAT_BG);
 
     const int fontSize = 14;
     const int lineHeight = 19;

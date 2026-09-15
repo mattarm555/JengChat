@@ -1,76 +1,104 @@
-JENG CHAT — Build macOS without owning a Mac
-================================================
+JENG CHAT — CHESS LEGAL MOVES / ROOK FIX / TURN TEXT v3
+======================================================
 
-These files let GitHub Actions build JengChat.app on GitHub-hosted macOS
-machines.
+WHAT THIS PATCH CHANGES
+-----------------------
 
-COPY INTO YOUR JENG CHAT PROJECT
---------------------------------
+1. Selecting a chess piece asks the SERVER for every legal destination.
+2. Every legal destination is highlighted:
+   - empty legal squares: green tint + green center dot
+   - legal captures: red tint + red outline
+3. The client only sends a move if the clicked destination is in the
+   authoritative legal-move list.
+4. The rook movement branch on the server was rewritten explicitly and is
+   shared by both white R and black r.
+5. TURN text is larger:
+   - TURN label: 18
+   - player name: 24
+6. Poker v3 lobby support, Roulette final-spin support, Blackjack final result
+   behavior, and the new color-theme chat colors are preserved in protocol.cpp.
 
-1. Copy this file into the project root:
-       build_macos_ci.sh
 
-2. Copy this workflow while preserving its folders:
-       .github/workflows/build-macos.yml
-
-3. Keep the macOS bundle files from the earlier JENG CHAT Mac package:
-       mac_bundle.cpp
-       mac_bundle.h
-       macos/Info.plist
-       macos/JengChat.icns
-
-4. main.cpp must contain:
-       #include "mac_bundle.h"
-
-   And at the beginning of main(), before InitWindow():
-       PrepareMacBundleWorkingDirectory();
-
-UPLOAD TO GITHUB
+FILES TO REPLACE
 ----------------
 
-Commit/push the project to a GitHub repository.
+Root:
+    app_state.h
+    protocol.cpp
 
-BUILD
------
+Games:
+    games/chess.cpp
 
-GitHub:
-    Repository -> Actions -> "Build JENG CHAT for macOS" -> Run workflow
+Server source:
+    server/server_google_cloud_poker_v3.cpp
 
-The workflow makes two downloads:
 
-    JengChat-macOS-Apple-Silicon
-    JengChat-macOS-Intel
+NO MAIN.CPP CHANGE IS NEEDED.
 
-Each artifact contains a ZIP with JengChat.app.
 
-Apple Silicon is for M1/M2/M3/M4/M5-era Macs.
-Intel is for older Intel-based Macs.
+CLIENT BUILD
+------------
 
-NO RAYLIB INSTALL REQUIRED ON FRIEND'S MAC
-------------------------------------------
+From MSYS2 UCRT64 in your repo:
 
-The CI script downloads raylib source and links libraylib.a statically into
-JENG CHAT. The friend should not need Homebrew, clang++, raylib, pkg-config,
-or any compiler tools.
+    windres jengchat.rc -O coff -o jengchat_res.o
 
-GATEKEEPER
-----------
+    g++ -std=c++17 main.cpp win_icon.cpp mac_bundle.cpp networking.cpp protocol.cpp ui/*.cpp games/*.cpp games/cards/*.cpp jengchat_res.o -I. -o JengChat.exe -lraylib -lopengl32 -lgdi32 -lwinmm -lws2_32 -pthread
 
-This build uses an ad-hoc signature, not an Apple Developer ID certificate.
-A friend's Mac can still warn that the developer cannot be verified.
+Then:
 
-For a small private test, they can normally:
-    Control-click JengChat.app -> Open -> Open
+    ./JengChat.exe
 
-For smooth public distribution, later add Apple Developer ID signing and
-Apple notarization.
 
-TESTING
--------
+SERVER
+------
 
-The workflow runs:
-    file ...
-    otool -L ...
+Upload the replacement:
 
-Check the workflow log. The final executable should not depend on a Homebrew
-raylib dylib.
+    server/server_google_cloud_poker_v3.cpp
+
+to the Google Cloud VM and compile it there.
+
+Typical command if you are inside the folder containing the file:
+
+    g++ -std=c++17 server_google_cloud_poker_v3.cpp -o jengchat_server -pthread
+
+Then stop the old server process/screen before starting the new one.
+
+If port 54000 says "address already in use":
+
+    sudo ss -ltnp | grep 54000
+    screen -ls
+
+Reconnect to/stop the old server before launching the new one.
+
+
+HOW LEGAL MOVE HIGHLIGHTING WORKS
+---------------------------------
+
+Client selects e2:
+    CHESS_LEGAL|e2
+
+Server runs the SAME legalChessMove() validator used for actual moves and
+returns something like:
+    CHESS_LEGAL|e2|e3,e4
+
+That means the green/red highlighted squares are not client guesses — they
+are exactly the squares the authoritative server will accept.
+
+
+ROOK TEST
+---------
+
+A rook cannot move from its starting square while its pawn is still blocking
+it. For a clean white-rook test:
+
+1. Move a2 -> a4
+2. Wait for Black's move
+3. Select the rook on a1
+
+You should now see a2 and a3 highlighted if both are open (and more squares
+depending on the board position).
+
+If the rook is pinned to the king, only moves that keep the king safe will
+highlight, because these are true legal moves, not merely geometric rook moves.

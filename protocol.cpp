@@ -79,9 +79,91 @@ namespace
         return "GAME CHALLENGE";
     }
 
+    int ChessSquareIndex(const string& square)
+    {
+        if (square.size() != 2)
+            return -1;
+
+        char file = square[0];
+
+        if (file >= 'A' && file <= 'H')
+            file = (char)(file - 'A' + 'a');
+
+        char rank = square[1];
+
+        if (
+            file < 'a' || file > 'h' ||
+            rank < '1' || rank > '8'
+        )
+        {
+            return -1;
+        }
+
+        int col = file - 'a';
+        int row = 8 - (rank - '0');
+
+        return row * 8 + col;
+    }
+
+
     void HandleChessPacket(AppState& app, const NetMessage& msg)
     {
         ChessClientState& chess = app.chess;
+
+        if (msg.type == "CHESS_LEGAL")
+        {
+            // fromSquare|destination1,destination2,...
+            // A dash means the selected piece has no legal destinations.
+            vector<string> fields = Split(msg.data);
+
+            if (fields.size() < 2)
+                return;
+
+            int sourceIndex = ChessSquareIndex(fields[0]);
+
+            // Ignore an old response if the user selected another piece
+            // before this response arrived.
+            if (
+                sourceIndex < 0 ||
+                chess.selectedSquare != sourceIndex
+            )
+            {
+                return;
+            }
+
+            chess.legalMoves.clear();
+            chess.legalMoveSource = sourceIndex;
+            chess.legalMovesLoaded = true;
+
+            if (fields[1] != "-")
+            {
+                vector<string> destinations =
+                    Split(fields[1], ',');
+
+                for (const string& square : destinations)
+                {
+                    int index = ChessSquareIndex(square);
+
+                    if (index >= 0)
+                        chess.legalMoves.push_back(index);
+                }
+            }
+
+            if (chess.legalMoves.empty())
+            {
+                chess.status = "This piece has no legal moves.";
+            }
+            else
+            {
+                chess.status =
+                    to_string(chess.legalMoves.size()) +
+                    " legal move" +
+                    (chess.legalMoves.size() == 1 ? "" : "s") +
+                    ".";
+            }
+
+            return;
+        }
 
         if (msg.type == "CHESS_STATE")
         {
@@ -101,6 +183,9 @@ namespace
             chess.yourColor = fields[4];
             chess.active = true;
             chess.selectedSquare = -1;
+            chess.legalMoves.clear();
+            chess.legalMoveSource = -1;
+            chess.legalMovesLoaded = false;
 
             if (chess.turn == app.username)
                 chess.status = "Your turn.";
@@ -130,6 +215,9 @@ namespace
             chess.status = msg.data;
             chess.active = false;
             chess.selectedSquare = -1;
+            chess.legalMoves.clear();
+            chess.legalMoveSource = -1;
+            chess.legalMovesLoaded = false;
             app.gameView = GameView::CHESS;
             return;
         }
@@ -386,11 +474,7 @@ namespace
 
         if (msg.type == "BJ_END")
         {
-            // Keep the final hand on the table instead of switching to
-            // a separate ENDED screen. The payout messages from the
-            // final hand are already stored in bj.payoutMessages, so
-            // leaving the client in RESULT phase keeps the HAND RESULTS
-            // box visible while still marking the match as finished.
+            // Keep the final hand and HAND RESULTS panel visible.
             bj.status = msg.data;
             bj.active = false;
             bj.phase = "RESULT";
@@ -655,6 +739,82 @@ namespace
     {
         PokerClientState& poker = app.poker;
 
+        if (msg.type == "POKER_CHALLENGE")
+        {
+            vector<string> fields = Split(msg.data);
+
+            // host|startingChips|smallBlind|bigBlind
+            if (fields.size() >= 4)
+            {
+                app.pendingChallenge.active = true;
+                app.pendingChallenge.error.clear();
+                app.pendingChallenge.game = GameView::POKER;
+                app.pendingChallenge.title = "POKER INVITE";
+                app.pendingChallenge.message =
+                    fields[0] +
+                    " invited you to a Poker table - " +
+                    fields[1] +
+                    " starting chips, blinds " +
+                    fields[2] +
+                    "/" +
+                    fields[3] +
+                    ".";
+
+                app.showHelpMenu = false;
+                app.commandPopup.open = false;
+            }
+
+            return;
+        }
+
+        if (msg.type == "POKER_LOBBY")
+        {
+            vector<string> fields = Split(msg.data);
+
+            // host|startingChips|smallBlind|bigBlind|player1|player2|status
+            if (fields.size() < 7)
+                return;
+
+            poker.tableActive = true;
+            poker.handActive = false;
+            poker.tablePhase = "LOBBY";
+            poker.hostName = fields[0];
+            poker.startingChips = ToInt(fields[1]);
+            poker.smallBlind = ToInt(fields[2]);
+            poker.bigBlind = ToInt(fields[3]);
+
+            string player1 = fields[4];
+            string player2 = fields[5];
+
+            if (app.username == player1)
+                poker.opponent = player2;
+            else
+                poker.opponent = player1;
+
+            poker.yourStack = poker.startingChips;
+            poker.opponentStack =
+                poker.opponent.empty()
+                ? 0
+                : poker.startingChips;
+
+            poker.stage = "WAITING";
+            poker.turn.clear();
+            poker.dealer.clear();
+            poker.pot = 0;
+            poker.yourBet = 0;
+            poker.opponentBet = 0;
+            poker.currentBet = 0;
+            poker.status = fields[6];
+
+            poker.holeCards.clear();
+            poker.communityCards.clear();
+            poker.opponentCards.clear();
+            poker.opponentRevealed = false;
+
+            app.gameView = GameView::POKER;
+            return;
+        }
+
         if (msg.type == "POKER_STATE")
         {
             vector<string> fields = Split(msg.data);
@@ -688,6 +848,10 @@ namespace
             poker.smallBlind = ToInt(fields[10]);
             poker.bigBlind = ToInt(fields[11]);
             poker.handActive = fields[12] == "1";
+            poker.tablePhase =
+                poker.handActive
+                ? "PLAYING"
+                : "RESULT";
             poker.handNumber = incomingHandNumber;
             poker.lastRaiseSize = ToInt(fields[14]);
 
@@ -760,6 +924,7 @@ namespace
         {
             poker.status = msg.data;
             poker.handActive = false;
+            poker.tablePhase = "RESULT";
             return;
         }
 
@@ -774,6 +939,7 @@ namespace
             poker.status = msg.data;
             poker.tableActive = false;
             poker.handActive = false;
+            poker.tablePhase = "ENDED";
             poker.turn.clear();
             return;
         }
@@ -825,7 +991,7 @@ void ProcessIncomingMessages(AppState& app)
                 AddChatLine(
                     app.history,
                     "[" + CurrentTime() + "] " + sender + ": " + message,
-                    TEXT_MAIN
+                    CHAT_TEXT
                 );
             }
 
@@ -834,7 +1000,7 @@ void ProcessIncomingMessages(AppState& app)
 
         if (msg.type == "SYS")
         {
-            AddChatLine(app.history, msg.data, JENG_YELLOW);
+            AddChatLine(app.history, msg.data, CHAT_SYSTEM);
             continue;
         }
 
@@ -873,9 +1039,38 @@ void ProcessIncomingMessages(AppState& app)
                 app.showHelpMenu = false;
                 app.commandPopup.open = false;
 
-                if (app.pendingChallenge.game != GameView::CHESS)
-                    AddChatLine(app.history, msg.data, SUCCESS);
+                if (
+                    app.pendingChallenge.game != GameView::CHESS &&
+                    app.pendingChallenge.game != GameView::POKER
+                )
+                {
+                    AddChatLine(
+                        app.history,
+                        msg.data,
+                        SUCCESS
+                    );
+                }
 
+                continue;
+            }
+
+            // Poker is graphical now. The legacy challenge sequence also
+            // sends a second GAME line such as:
+            //
+            //   Starting chips: 1000 | Blinds: 10/20
+            //
+            // Keep those details in the invite modal instead of dumping
+            // terminal-style game text into permanent chat.
+            if (
+                app.pendingChallenge.active &&
+                app.pendingChallenge.game == GameView::POKER &&
+                (
+                    Contains(msg.data, "Starting chips:") ||
+                    Contains(msg.data, "Blinds:")
+                )
+            )
+            {
+                app.poker.status = msg.data;
                 continue;
             }
 
@@ -914,7 +1109,25 @@ void ProcessIncomingMessages(AppState& app)
                 continue;
             }
 
-            AddChatLine(app.history, msg.data, SUCCESS);
+            // Poker's game lifecycle belongs entirely in the right-side
+            // table UI. Challenge-sent / accepted messages from older
+            // servers should not appear as green terminal lines in chat.
+            if (Contains(msg.data, "Poker") || Contains(msg.data, "POKER"))
+            {
+                app.poker.status = msg.data;
+
+                if (
+                    Contains(msg.data, "accepted") ||
+                    Contains(msg.data, "challenge sent")
+                )
+                {
+                    app.gameView = GameView::POKER;
+                }
+
+                continue;
+            }
+
+            AddChatLine(app.history, msg.data, CHAT_GAME);
             continue;
         }
 
@@ -938,14 +1151,17 @@ void ProcessIncomingMessages(AppState& app)
                 continue;
             }
 
+            if (app.gameView == GameView::POKER)
+            {
+                app.poker.status = msg.data;
+                continue;
+            }
+
             AddChatLine(
                 app.history,
                 "[!] " + msg.data,
                 ERROR_COLOR
             );
-
-            if (app.gameView == GameView::POKER)
-                app.poker.status = msg.data;
 
             continue;
         }

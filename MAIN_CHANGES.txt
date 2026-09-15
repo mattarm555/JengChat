@@ -1,0 +1,202 @@
+MAIN.CPP — DO NOT REPLACE YOUR FILE
+===================================
+
+Keep your current main.cpp, including your Windows icon and macOS bundle code.
+Make only these changes.
+
+
+1) ADD THE INCLUDE
+------------------
+
+Near your other UI includes, add:
+
+    #include "ui/appearance.h"
+
+For example, near:
+
+    #include "ui/header.h"
+    #include "ui/help.h"
+    #include "ui/login.h"
+
+make it:
+
+    #include "ui/header.h"
+    #include "ui/help.h"
+    #include "ui/login.h"
+    #include "ui/appearance.h"
+
+
+2) UPDATE HasModalOpen()
+------------------------
+
+Find:
+
+    bool HasModalOpen(const AppState& app)
+    {
+        return
+            app.showHelpMenu ||
+            app.commandPopup.open ||
+            app.pendingChallenge.active;
+    }
+
+Change it to:
+
+    bool HasModalOpen(const AppState& app)
+    {
+        return
+            app.showHelpMenu ||
+            app.commandPopup.open ||
+            app.pendingChallenge.active ||
+            IsAppearanceSettingsOpen();
+    }
+
+This stops clicks/typing from going through the Appearance window.
+
+
+3) DRAW APPEARANCE LAST
+-----------------------
+
+Inside DrawMainApp(AppState& app), you currently draw your modals at the end,
+something like:
+
+    if (app.showHelpMenu)
+        DrawHelpMenu(app);
+
+    if (app.commandPopup.open)
+        DrawCommandPopup(app);
+
+    if (app.pendingChallenge.active)
+        DrawPendingChallengePopup(app);
+
+Immediately AFTER those, add:
+
+    if (IsAppearanceSettingsOpen())
+        DrawAppearanceSettings();
+
+Appearance should be the LAST modal drawn.
+
+
+4) LOAD SAVED COLORS AT STARTUP
+-------------------------------
+
+At the very beginning of main(), call:
+
+    LoadAppearanceSettings();
+
+Since your current project also has mac_bundle.cpp, a good beginning is:
+
+    int main()
+    {
+        PrepareMacBundleWorkingDirectory();
+        LoadAppearanceSettings();
+
+        SetConfigFlags(
+            ...
+        );
+
+        InitWindow(
+            ...
+        );
+
+If PrepareMacBundleWorkingDirectory() is already somewhere else, KEEP IT.
+The important part is that LoadAppearanceSettings() happens before the main
+render loop.
+
+
+5) MAKE ESC CANCEL APPEARANCE
+-----------------------------
+
+Find your:
+
+    if (IsKeyPressed(KEY_ESCAPE))
+    {
+        ...
+    }
+
+The FIRST condition inside it should be:
+
+    if (IsAppearanceSettingsOpen())
+    {
+        CancelAppearanceSettings();
+    }
+    else if (app.pendingChallenge.active)
+    {
+        // Intentionally do nothing.
+    }
+
+Then keep the rest of your existing ESC handling after that.
+
+So the complete order should be approximately:
+
+    if (IsKeyPressed(KEY_ESCAPE))
+    {
+        if (IsAppearanceSettingsOpen())
+        {
+            CancelAppearanceSettings();
+        }
+        else if (app.pendingChallenge.active)
+        {
+            // Intentionally do nothing.
+        }
+        else if (app.commandPopup.open)
+        {
+            app.commandPopup.open = false;
+            app.commandPopup.error.clear();
+        }
+        else if (app.showHelpMenu)
+        {
+            app.showHelpMenu = false;
+        }
+        else if (IsWindowFullscreen())
+        {
+            ToggleFullscreen();
+        }
+    }
+
+
+6) BUILD
+--------
+
+No new wildcard is needed.
+
+Your Windows build already has:
+
+    ui/*.cpp
+
+so ui/appearance.cpp will compile automatically.
+
+Your macOS GitHub Actions build also uses:
+
+    ui/*.cpp
+
+so the same color settings feature is included in JengChat.app.
+
+
+7) WHERE TO OPEN IT
+-------------------
+
+After these changes:
+
+    HELP
+      -> APPEARANCE
+
+opens the settings window.
+
+
+8) SAVED SETTINGS
+-----------------
+
+Windows:
+    %APPDATA%\JengChat\theme.cfg
+
+macOS:
+    ~/Library/Application Support/JengChat/theme.cfg
+
+
+NOTE
+----
+
+Existing chat messages still store the Color that they had when received.
+Changing a chat color affects new messages immediately. In the next cleanup
+we can change ChatLine from "stored Color" to a semantic type so the entire
+existing history recolors instantly.

@@ -4,6 +4,7 @@
 #include "../networking.h"
 #include "../theme.h"
 
+#include "appearance.h"
 #include "command_popup.h"
 #include "ui_common.h"
 
@@ -249,6 +250,7 @@ void DrawHelpMenu(AppState& app)
     bool pokerHover = IsMouseInside(poker);
     bool rouletteHover = IsMouseInside(roulette);
     bool tttHover = IsMouseInside(ticTacToe);
+    bool appearanceHover = IsMouseInside(controlsInfo);
 
 
     DrawMenuCard(
@@ -308,45 +310,12 @@ void DrawHelpMenu(AppState& app)
     );
 
 
-    // Controls is intentionally informational instead of another
-    // command button.
-    DrawRectangleRounded(
+    DrawMenuCard(
         controlsInfo,
-        0.06f,
-        8,
-        PANEL_ALT
-    );
-
-    DrawRectangleRoundedLinesEx(
-        controlsInfo,
-        0.06f,
-        8,
-        1.0f,
-        PANEL_LIGHT
-    );
-
-    DrawText(
-        "CONTROLS",
-        (int)controlsInfo.x + 16,
-        (int)controlsInfo.y + 11,
-        17,
-        TEXT_MAIN
-    );
-
-    DrawText(
-        "Mouse-first  |  F11 fullscreen",
-        (int)controlsInfo.x + 16,
-        (int)controlsInfo.y + 35,
-        12,
-        TEXT_MUTED
-    );
-
-    DrawText(
-        "ESC closes menus / exits fullscreen",
-        (int)controlsInfo.x + 16,
-        (int)controlsInfo.y + 50,
-        12,
-        TEXT_MUTED
+        "APPEARANCE",
+        "Customize client colors",
+        JENG_RED,
+        appearanceHover
     );
 
 
@@ -420,6 +389,14 @@ void DrawHelpMenu(AppState& app)
             {"Opponent username"}
         );
 
+        CloseHelp(app);
+        return;
+    }
+
+
+    if (CardClicked(controlsInfo))
+    {
+        OpenAppearanceSettings();
         CloseHelp(app);
         return;
     }

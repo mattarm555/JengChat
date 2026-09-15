@@ -18,6 +18,7 @@
 #include "ui/ui_common.h"
 #include "win_icon.h"
 #include "mac_bundle.h"
+#include "ui/appearance.h"
 
 #include <algorithm>
 
@@ -28,12 +29,13 @@ using namespace std;
 namespace
 {
     bool HasModalOpen(const AppState& app)
-    {
-        return
-            app.showHelpMenu ||
-            app.commandPopup.open ||
-            app.pendingChallenge.active;
-    }
+{
+    return
+        app.showHelpMenu ||
+        app.commandPopup.open ||
+        app.pendingChallenge.active ||
+        IsAppearanceSettingsOpen();
+}
 
     void DrawMainApp(AppState& app)
     {
@@ -70,12 +72,16 @@ namespace
 
         if (app.pendingChallenge.active)
             DrawPendingChallengePopup(app);
+
+        if (IsAppearanceSettingsOpen())
+            DrawAppearanceSettings();
     }
 }
 
 int main()
 {
     PrepareMacBundleWorkingDirectory();
+    LoadAppearanceSettings();
     
     // The standard Windows maximize button works because the window is resizable.
     SetConfigFlags(
@@ -146,28 +152,30 @@ int main()
         if (IsKeyPressed(KEY_F11))
             ToggleFullscreen();
 
-        if (IsKeyPressed(KEY_ESCAPE))
-        {
-            // A challenge needs an explicit ACCEPT or DECLINE.
-            if (app.pendingChallenge.active)
-            {
-                // Intentionally do nothing.
-            }
-            else if (app.commandPopup.open)
-            {
-                app.commandPopup.open = false;
-                app.commandPopup.error.clear();
-            }
-            else if (app.showHelpMenu)
-            {
-                app.showHelpMenu = false;
-            }
-            else if (IsWindowFullscreen())
-            {
-                ToggleFullscreen();
-            }
-        }
-
+       if (IsKeyPressed(KEY_ESCAPE))
+{
+    if (IsAppearanceSettingsOpen())
+    {
+        CancelAppearanceSettings();
+    }
+    else if (app.pendingChallenge.active)
+    {
+        // Intentionally do nothing.
+    }
+    else if (app.commandPopup.open)
+    {
+        app.commandPopup.open = false;
+        app.commandPopup.error.clear();
+    }
+    else if (app.showHelpMenu)
+    {
+        app.showHelpMenu = false;
+    }
+    else if (IsWindowFullscreen())
+    {
+        ToggleFullscreen();
+    }
+}
         BeginTextureMode(target);
         ClearBackground(BG);
 

@@ -1,0 +1,24 @@
+# Build outputs
+*.exe
+*.o
+*.obj
+*.dll
+*.so
+*.dylib
+
+# Distribution folders
+dist/
+build/
+
+# Temporary/vendor build files
+vendor/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# VS Code local settings
+.vscode/
+
+# Generated resource object
+jengchat_res.o

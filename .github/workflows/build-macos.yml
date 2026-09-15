@@ -1,0 +1,50 @@
+name: Build JENG CHAT for macOS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact: JengChat-macOS-Apple-Silicon
+            runner: macos-latest
+          - artifact: JengChat-macOS-Intel
+            runner: macos-15-intel
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - name: Check out JENG CHAT
+        uses: actions/checkout@v4
+
+      - name: Make macOS scripts executable
+        run: |
+          chmod +x build_macos_ci.sh
+
+      - name: Build JENG CHAT .app
+        run: |
+          ./build_macos_ci.sh
+
+      - name: Show binary architecture and dependencies
+        run: |
+          file dist/JengChat.app/Contents/MacOS/JengChat
+          otool -L dist/JengChat.app/Contents/MacOS/JengChat
+
+      - name: Create distributable ZIP
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            dist/JengChat.app \
+            dist/${{ matrix.artifact }}.zip
+
+      - name: Upload macOS build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}.zip
+          if-no-files-found: error

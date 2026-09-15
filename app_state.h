@@ -17,7 +17,8 @@ enum class GameView
     CHESS,
     BLACKJACK,
     POKER,
-    ROULETTE
+    ROULETTE,
+    ARENA
 };
 
 struct ChatLine

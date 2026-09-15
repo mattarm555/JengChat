@@ -7,6 +7,7 @@
 #include "theme.h"
 
 #include "games/game_area.h"
+#include "games/arena.h"
 #include "games/cards/card_renderer.h"
 
 #include "ui/challenge_popup.h"
@@ -152,70 +153,116 @@ int main()
         if (IsKeyPressed(KEY_F11))
             ToggleFullscreen();
 
-       if (IsKeyPressed(KEY_ESCAPE))
-{
-    if (IsAppearanceSettingsOpen())
-    {
-        CancelAppearanceSettings();
-    }
-    else if (app.pendingChallenge.active)
-    {
-        // Intentionally do nothing.
-    }
-    else if (app.commandPopup.open)
-    {
-        app.commandPopup.open = false;
-        app.commandPopup.error.clear();
-    }
-    else if (app.showHelpMenu)
-    {
-        app.showHelpMenu = false;
-    }
-    else if (IsWindowFullscreen())
-    {
-        ToggleFullscreen();
-    }
-}
-        BeginTextureMode(target);
-        ClearBackground(BG);
+        if (IsKeyPressed(KEY_ESCAPE))
+        {
+            if (
+                app.screen == AppScreen::MAIN &&
+                app.gameView == GameView::ARENA
+            )
+            {
+                // Keep the application's existing fullscreen convention:
+                // ESC exits fullscreen first. A second ESC is then handled
+                // by Arena (match -> setup -> JENG CHAT hub).
+                if (IsWindowFullscreen())
+                    ToggleFullscreen();
+                else
+                    ArenaHandleEscape(app);
+            }
+            else if (IsAppearanceSettingsOpen())
+            {
+                CancelAppearanceSettings();
+            }
+            else if (app.pendingChallenge.active)
+            {
+                // Intentionally do nothing.
+            }
+            else if (app.commandPopup.open)
+            {
+                app.commandPopup.open = false;
+                app.commandPopup.error.clear();
+            }
+            else if (app.showHelpMenu)
+            {
+                app.showHelpMenu = false;
+            }
+            else if (IsWindowFullscreen())
+            {
+                ToggleFullscreen();
+            }
+        }
 
-        if (app.screen == AppScreen::LOGIN)
-            DrawLoginScreen(app);
+
+        bool arenaActive =
+            app.screen == AppScreen::MAIN &&
+            app.gameView == GameView::ARENA;
+
+
+        // Arena renders into its own 1280x720 target. It deliberately does
+        // this OUTSIDE JENG CHAT's normal UI render texture so Raylib never
+        // has to nest BeginTextureMode() calls.
+        if (arenaActive)
+        {
+            ArenaUpdateAndRender(
+                app.username
+            );
+        }
         else
-            DrawMainApp(app);
+        {
+            BeginTextureMode(target);
+            ClearBackground(BG);
 
-        EndTextureMode();
+            if (app.screen == AppScreen::LOGIN)
+                DrawLoginScreen(app);
+            else
+                DrawMainApp(app);
+
+            EndTextureMode();
+        }
+
 
         BeginDrawing();
         ClearBackground(BG);
 
-        Rectangle source = {
-            0.0f,
-            0.0f,
-            (float)target.texture.width,
-            -(float)target.texture.height
-        };
+        if (arenaActive)
+        {
+            // Arena takes over the whole JENG CHAT window while active.
+            // The same JENG CHAT window, taskbar icon, and F11 fullscreen
+            // behavior remain in control.
+            ArenaDrawToWindow();
+        }
+        else
+        {
+            Rectangle source = {
+                0.0f,
+                0.0f,
+                (float)target.texture.width,
+                -(float)target.texture.height
+            };
 
-        Rectangle destination = {
-            offsetX,
-            offsetY,
-            drawWidth,
-            drawHeight
-        };
+            Rectangle destination = {
+                offsetX,
+                offsetY,
+                drawWidth,
+                drawHeight
+            };
 
-        DrawTexturePro(
-            target.texture,
-            source,
-            destination,
-            Vector2{0.0f, 0.0f},
-            0.0f,
-            WHITE
-        );
+            DrawTexturePro(
+                target.texture,
+                source,
+                destination,
+                Vector2{0.0f, 0.0f},
+                0.0f,
+                WHITE
+            );
+        }
 
         EndDrawing();
     }
 
     NetDisconnect();
+
+    ArenaShutdown();
+
     UnloadCardAssets();
     UnloadRenderTexture(target);
     CloseWindow();

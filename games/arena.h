@@ -4,9 +4,10 @@
 
 #include <string>
 
-// Arena owns its gameplay state and a 1280x720 render texture, but NOT
-// the application window. JENG CHAT remains the only Raylib window.
-void ArenaUpdateAndRender(const std::string& username);
+// Arena owns its local gameplay state and 1280x720 render texture, but NOT
+// the application window. AppState supplies the logged-in username plus the
+// server-backed Arena lobby state.
+void ArenaUpdateAndRender(AppState& app);
 
 // Call during JENG CHAT's normal BeginDrawing()/EndDrawing() pass.
 void ArenaDrawToWindow();

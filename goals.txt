@@ -1,0 +1,15 @@
+1. Add player collision to tank game. (dont want players going through each other)
+1a. expand tank game features, expand map itself, maybe add another map. Improve UI. Cannot currently accept invites from inside tank game lobby.
+2. Add some type of shooter and / or platformer.
+3. Fix UI issues at some point, text covering stuff, lines covering text, winning messages, text not fitting inside boxes
+4. change font and / or add a custom font system where users can choose the font.
+5. improve graphics. Graphics right now are very pixelated. In the future I do not want to see the pixels.
+6. Future: add some type of larger scale game that can be launched through JengChat client.
+7. Add more customization, such as username becoming "usernameChat" instead of "JengChat"
+8. Onboard copilot at some point
+9. figure out a way to decorate the JengChat client with either pictures or GIFs. 
+10. Make the games tab pages, so maybe 3 or 4 games to a page.
+11. Revamp help button to include minimal buttons.
+12. REMOVE TIC TAC TOE and any other terminal implementation. 
+13. Create some type of sign-in/sign-up process. Store user information for when they sign back in w/ their username + password.
+14. Figure out databases, and create some type of database to store user information and connect it to the server.

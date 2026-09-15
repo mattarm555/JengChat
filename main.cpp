@@ -203,7 +203,7 @@ int main()
         if (arenaActive)
         {
             ArenaUpdateAndRender(
-                app.username
+                app
             );
         }
         else

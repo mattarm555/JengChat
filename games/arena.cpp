@@ -1,7 +1,9 @@
 #include "raylib.h"
 #include "arena.h"
+#include "../networking.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -67,6 +69,16 @@ namespace
         };
     }
 
+    void CenterArenaMouse()
+    {
+        Rectangle viewport = GetArenaViewport();
+
+        SetMousePosition(
+            (int)(viewport.x + viewport.width * 0.5f),
+            (int)(viewport.y + viewport.height * 0.5f)
+        );
+    }
+
     void DrawArenaRenderTarget(
         const RenderTexture2D& target)
     {
@@ -130,17 +142,21 @@ namespace
     }
 
     constexpr float ARENA_HALF = 19.0f;
-    constexpr float TANK_RADIUS = 0.70f;
+    constexpr float TANK_RADIUS = 0.82f;
     constexpr float PLAYER_SPEED = 7.0f;
     constexpr float BOT_SPEED = 4.0f;
-    constexpr float BULLET_SPEED = 24.0f;
+    constexpr float BULLET_SPEED = 36.0f;
     constexpr float BULLET_RADIUS = 0.16f;
-    constexpr float PLAYER_FIRE_COOLDOWN = 0.22f;
+    constexpr float MINE_RADIUS = 0.42f;
+    constexpr float MINE_TRIGGER_RADIUS = 0.42f;
+    constexpr float PLAYER_FIRE_COOLDOWN = 0.16f;
     constexpr float BOT_FIRE_COOLDOWN = 0.75f;
     constexpr float RESPAWN_TIME = 2.0f;
+    constexpr int MAX_LOCAL_MINES_PER_PLAYER = 3;
 
     constexpr int MAX_HEALTH = 100;
     constexpr int SHOT_DAMAGE = 25;
+    constexpr int MINE_DAMAGE = 100;
 
     constexpr int DEFAULT_SCORE_LIMIT = 5;
     constexpr float DEFAULT_TIME_LIMIT = 180.0f;
@@ -249,6 +265,34 @@ namespace
         bool active = true;
     };
 
+    struct Mine
+    {
+        Vector3 position{};
+        int owner = -1;
+        int colorIndex = -1;
+        int team = -1;
+        Color color = WHITE;
+        bool active = true;
+    };
+
+    struct DeathExplosion
+    {
+        Vector3 position{};
+        Color tankColor = WHITE;
+        float age = 0.0f;
+        float duration = 0.85f;
+    };
+
+    struct ExplosionParticle
+    {
+        Vector3 position{};
+        Vector3 velocity{};
+        Color color = WHITE;
+        float life = 0.0f;
+        float maxLife = 0.0f;
+        float radius = 0.10f;
+    };
+
     float LengthXZ(Vector3 v)
     {
         return std::sqrt(v.x * v.x + v.z * v.z);
@@ -300,6 +344,62 @@ namespace
         }
 
         return "UNKNOWN";
+    }
+
+
+    const char* ArenaModePacketName(ArenaMode mode)
+    {
+        switch (mode)
+        {
+            case ArenaMode::SCORE_FFA: return "SCORE_FFA";
+            case ArenaMode::TIME_FFA:  return "TIME_FFA";
+            case ArenaMode::DUEL:      return "DUEL";
+            case ArenaMode::TEAM_2V2:  return "TEAM_2V2";
+            case ArenaMode::TEAM_3V3:  return "TEAM_3V3";
+        }
+
+        return "SCORE_FFA";
+    }
+
+    ArenaMode ArenaModeFromPacketName(
+        const std::string& mode)
+    {
+        if (mode == "TIME_FFA")
+            return ArenaMode::TIME_FFA;
+        if (mode == "DUEL")
+            return ArenaMode::DUEL;
+        if (mode == "TEAM_2V2")
+            return ArenaMode::TEAM_2V2;
+        if (mode == "TEAM_3V3")
+            return ArenaMode::TEAM_3V3;
+
+        return ArenaMode::SCORE_FFA;
+    }
+
+    Vector3 ArenaDirectionFromYaw(float yawDegrees)
+    {
+        float radians = yawDegrees * DEG2RAD;
+
+        return {
+            std::sin(radians),
+            0.0f,
+            std::cos(radians)
+        };
+    }
+
+    float ArenaLerpAngleDegrees(
+        float current,
+        float target,
+        float amount)
+    {
+        float delta =
+            std::fmod(
+                target - current + 540.0f,
+                360.0f
+            ) -
+            180.0f;
+
+        return current + delta * amount;
     }
 
     bool IsTeamMode(const MatchSettings& settings)
@@ -764,7 +864,8 @@ namespace
     void DamageCombatant(
         int attacker,
         int victim,
-        std::vector<Combatant>& combatants)
+        std::vector<Combatant>& combatants,
+        int damage = SHOT_DAMAGE)
     {
         if (
             attacker < 0 || attacker >= (int)combatants.size() ||
@@ -779,7 +880,7 @@ namespace
 
         int appliedDamage =
             std::min(
-                SHOT_DAMAGE,
+                damage,
                 target.health
             );
 
@@ -805,6 +906,129 @@ namespace
 
         if (attacker != victim)
             combatants[attacker].kills++;
+    }
+
+    void PlaceLocalMine(
+        int owner,
+        const std::vector<Combatant>& combatants,
+        std::vector<Mine>& mines)
+    {
+        if (
+            owner < 0 ||
+            owner >= (int)combatants.size() ||
+            !combatants[owner].alive
+        )
+        {
+            return;
+        }
+
+        int activeOwned = 0;
+        int oldestOwned = -1;
+
+        for (int i = 0; i < (int)mines.size(); i++)
+        {
+            if (mines[i].active && mines[i].owner == owner)
+            {
+                activeOwned++;
+
+                if (oldestOwned < 0)
+                    oldestOwned = i;
+            }
+        }
+
+        if (
+            activeOwned >= MAX_LOCAL_MINES_PER_PLAYER &&
+            oldestOwned >= 0
+        )
+        {
+            mines.erase(mines.begin() + oldestOwned);
+        }
+
+        const Combatant& placer = combatants[owner];
+
+        Mine mine;
+        mine.position = {
+            placer.position.x,
+            0.0f,
+            placer.position.z
+        };
+        mine.owner = owner;
+        mine.colorIndex = placer.colorIndex;
+        mine.team = placer.team;
+        mine.color = placer.color;
+        mine.active = true;
+
+        mines.push_back(mine);
+    }
+
+    void UpdateLocalMines(
+        std::vector<Mine>& mines,
+        std::vector<Combatant>& combatants,
+        const MatchSettings& settings)
+    {
+        for (Mine& mine : mines)
+        {
+            if (!mine.active)
+                continue;
+
+            for (int i = 0; i < (int)combatants.size(); i++)
+            {
+                if (
+                    i == mine.owner ||
+                    !combatants[i].alive
+                )
+                {
+                    continue;
+                }
+
+                if (
+                    mine.owner >= 0 &&
+                    mine.owner < (int)combatants.size() &&
+                    !AreEnemies(
+                        combatants[mine.owner],
+                        combatants[i],
+                        settings
+                    )
+                )
+                {
+                    continue;
+                }
+
+                float triggerDistance =
+                    TANK_RADIUS +
+                    MINE_TRIGGER_RADIUS;
+
+                if (
+                    DistanceXZ(
+                        mine.position,
+                        combatants[i].position
+                    ) <= triggerDistance
+                )
+                {
+                    DamageCombatant(
+                        mine.owner,
+                        i,
+                        combatants,
+                        MINE_DAMAGE
+                    );
+
+                    mine.active = false;
+                    break;
+                }
+            }
+        }
+
+        mines.erase(
+            std::remove_if(
+                mines.begin(),
+                mines.end(),
+                [](const Mine& mine)
+                {
+                    return !mine.active;
+                }
+            ),
+            mines.end()
+        );
     }
 
     int FindNearestTarget(
@@ -1266,6 +1490,300 @@ namespace
         }
     }
 
+    void DrawMines(const std::vector<Mine>& mines)
+    {
+        for (const Mine& mine : mines)
+        {
+            if (!mine.active)
+                continue;
+
+            DrawCylinder(
+                {mine.position.x, 0.10f, mine.position.z},
+                MINE_RADIUS,
+                MINE_RADIUS * 0.86f,
+                0.20f,
+                18,
+                Color{30, 32, 38, 255}
+            );
+
+            DrawCylinder(
+                {mine.position.x, 0.22f, mine.position.z},
+                MINE_RADIUS * 0.58f,
+                MINE_RADIUS * 0.58f,
+                0.08f,
+                18,
+                mine.color
+            );
+
+            DrawSphereWires(
+                {mine.position.x, 0.18f, mine.position.z},
+                MINE_RADIUS + 0.06f,
+                8,
+                12,
+                mine.color
+            );
+        }
+    }
+
+    void SpawnDeathExplosion(
+        const Combatant& combatant,
+        std::vector<DeathExplosion>& explosions,
+        std::vector<ExplosionParticle>& particles)
+    {
+        DeathExplosion explosion;
+        explosion.position = {
+            combatant.position.x,
+            0.80f,
+            combatant.position.z
+        };
+        explosion.tankColor = combatant.color;
+        explosions.push_back(explosion);
+
+        constexpr int PARTICLE_COUNT = 30;
+
+        for (int i = 0; i < PARTICLE_COUNT; i++)
+        {
+            float angle =
+                (2.0f * 3.14159265358979323846f * (float)i) /
+                (float)PARTICLE_COUNT;
+
+            float speed =
+                2.5f +
+                0.55f * (float)(i % 5);
+
+            float vertical =
+                2.2f +
+                0.45f * (float)(i % 4);
+
+            ExplosionParticle particle;
+            particle.position = explosion.position;
+            particle.velocity = {
+                std::cos(angle) * speed,
+                vertical,
+                std::sin(angle) * speed
+            };
+
+            if (i % 5 == 0)
+                particle.color = combatant.color;
+            else if (i % 2 == 0)
+                particle.color = JENG_YELLOW;
+            else
+                particle.color = Color{255, 125, 45, 255};
+
+            particle.maxLife =
+                0.45f +
+                0.06f * (float)(i % 6);
+            particle.life = particle.maxLife;
+            particle.radius =
+                0.07f +
+                0.02f * (float)(i % 4);
+
+            particles.push_back(particle);
+        }
+    }
+
+    void SyncDeathExplosionTracker(
+        const std::vector<Combatant>& combatants,
+        std::vector<std::string>& trackedNames,
+        std::vector<int>& trackedDeaths)
+    {
+        trackedNames.clear();
+        trackedDeaths.clear();
+
+        for (const Combatant& combatant : combatants)
+        {
+            trackedNames.push_back(combatant.name);
+            trackedDeaths.push_back(combatant.deaths);
+        }
+    }
+
+    void DetectDeathExplosions(
+        const std::vector<Combatant>& combatants,
+        std::vector<std::string>& trackedNames,
+        std::vector<int>& trackedDeaths,
+        std::vector<DeathExplosion>& explosions,
+        std::vector<ExplosionParticle>& particles)
+    {
+        bool layoutChanged =
+            trackedNames.size() != combatants.size() ||
+            trackedDeaths.size() != combatants.size();
+
+        if (!layoutChanged)
+        {
+            for (int i = 0; i < (int)combatants.size(); i++)
+            {
+                if (trackedNames[i] != combatants[i].name)
+                {
+                    layoutChanged = true;
+                    break;
+                }
+            }
+        }
+
+        if (layoutChanged)
+        {
+            SyncDeathExplosionTracker(
+                combatants,
+                trackedNames,
+                trackedDeaths
+            );
+            return;
+        }
+
+        for (int i = 0; i < (int)combatants.size(); i++)
+        {
+            if (combatants[i].deaths > trackedDeaths[i])
+            {
+                SpawnDeathExplosion(
+                    combatants[i],
+                    explosions,
+                    particles
+                );
+            }
+
+            trackedDeaths[i] = combatants[i].deaths;
+        }
+    }
+
+    void UpdateDeathExplosions(
+        std::vector<DeathExplosion>& explosions,
+        std::vector<ExplosionParticle>& particles,
+        float dt)
+    {
+        for (DeathExplosion& explosion : explosions)
+            explosion.age += dt;
+
+        explosions.erase(
+            std::remove_if(
+                explosions.begin(),
+                explosions.end(),
+                [](const DeathExplosion& explosion)
+                {
+                    return explosion.age >= explosion.duration;
+                }
+            ),
+            explosions.end()
+        );
+
+        for (ExplosionParticle& particle : particles)
+        {
+            particle.life -= dt;
+
+            particle.position =
+                Add(
+                    particle.position,
+                    Scale(
+                        particle.velocity,
+                        dt
+                    )
+                );
+
+            particle.velocity.y -=
+                5.5f * dt;
+        }
+
+        particles.erase(
+            std::remove_if(
+                particles.begin(),
+                particles.end(),
+                [](const ExplosionParticle& particle)
+                {
+                    return particle.life <= 0.0f;
+                }
+            ),
+            particles.end()
+        );
+    }
+
+    void DrawDeathExplosions(
+        const std::vector<DeathExplosion>& explosions,
+        const std::vector<ExplosionParticle>& particles)
+    {
+        for (const DeathExplosion& explosion : explosions)
+        {
+            float t =
+                std::min(
+                    1.0f,
+                    explosion.age /
+                    explosion.duration
+                );
+
+            if (t < 0.42f)
+            {
+                float burstT = t / 0.42f;
+                float radius =
+                    0.35f +
+                    burstT * 1.45f;
+
+                DrawSphere(
+                    explosion.position,
+                    radius,
+                    Color{255, 105, 35, 255}
+                );
+
+                DrawSphere(
+                    explosion.position,
+                    radius * 0.58f,
+                    JENG_YELLOW
+                );
+
+                DrawSphereWires(
+                    explosion.position,
+                    radius * 1.12f,
+                    10,
+                    16,
+                    explosion.tankColor
+                );
+            }
+            else
+            {
+                float smokeT =
+                    (t - 0.42f) /
+                    0.58f;
+
+                Vector3 smokePosition = {
+                    explosion.position.x,
+                    explosion.position.y +
+                        0.65f +
+                        smokeT * 1.35f,
+                    explosion.position.z
+                };
+
+                DrawSphere(
+                    smokePosition,
+                    0.70f + smokeT * 0.45f,
+                    Color{65, 65, 72, 255}
+                );
+
+                DrawSphereWires(
+                    smokePosition,
+                    0.78f + smokeT * 0.48f,
+                    8,
+                    12,
+                    Color{105, 105, 115, 255}
+                );
+            }
+        }
+
+        for (const ExplosionParticle& particle : particles)
+        {
+            if (particle.life <= 0.0f)
+                continue;
+
+            float lifeRatio =
+                particle.maxLife > 0.0f
+                ? particle.life / particle.maxLife
+                : 0.0f;
+
+            DrawSphere(
+                particle.position,
+                particle.radius *
+                    std::max(0.25f, lifeRatio),
+                particle.color
+            );
+        }
+    }
+
     bool MenuButton(
         Rectangle rect,
         const char* label,
@@ -1372,7 +1890,8 @@ namespace
 
     bool DrawSetupScreen(
         MatchSettings& settings,
-        const std::string& username)
+        const std::string& username,
+        AppState& app)
     {
         NormalizeSettings(settings);
 
@@ -1816,29 +2335,723 @@ namespace
             );
         }
 
-        Rectangle startButton = {
+        Rectangle onlineButton = {
             475.0f,
             548.0f,
-            695.0f,
+            500.0f,
             48.0f
         };
 
-        bool start =
+        Rectangle localButton = {
+            990.0f,
+            548.0f,
+            180.0f,
+            48.0f
+        };
+
+        if (
             MenuButton(
-                startButton,
-                "START MATCH",
+                onlineButton,
+                "CREATE ONLINE LOBBY",
                 true
+            )
+        )
+        {
+            std::string packet =
+                std::string("ARENA_CREATE|") +
+                ArenaModePacketName(settings.mode) +
+                "|" +
+                std::to_string(settings.playerCount) +
+                "|" +
+                std::to_string(settings.scoreLimit) +
+                "|" +
+                std::to_string((int)settings.timeLimitSeconds) +
+                "|" +
+                std::to_string(settings.selectedColorIndex);
+
+            if (NetSendLine(packet))
+            {
+                app.arena.status =
+                    "Creating Arena lobby...";
+            }
+            else
+            {
+                app.arena.status =
+                    NetLastError();
+            }
+        }
+
+        bool startLocal =
+            MenuButton(
+                localButton,
+                "LOCAL TEST"
             );
 
+        if (!app.arena.status.empty())
+        {
+            DrawText(
+                app.arena.status.c_str(),
+                475,
+                612,
+                15,
+                Color{170, 174, 188, 255}
+            );
+        }
+
         DrawText(
-            "Offline test mode fills open slots with bots. ESC returns to JENG CHAT.",
+            "Online creates a JENG CHAT lobby. Local Test keeps the bot prototype available.",
             65,
-            641,
+            664,
             15,
             Color{135, 139, 154, 255}
         );
 
-        return start;
+        return startLocal;
+    }
+
+
+
+    bool ArenaLobbyIsTeamMode(const std::string& mode)
+    {
+        return
+            mode == "TEAM_2V2" ||
+            mode == "TEAM_3V3";
+    }
+
+
+    const char* ArenaLobbyModeLabel(const std::string& mode)
+    {
+        if (mode == "SCORE_FFA") return "SCORE FFA";
+        if (mode == "TIME_FFA") return "TIME FFA";
+        if (mode == "DUEL") return "DUEL";
+        if (mode == "TEAM_2V2") return "TEAMS 2v2";
+        if (mode == "TEAM_3V3") return "TEAMS 3v3";
+        return "JENG ARENA";
+    }
+
+
+    int FindArenaLobbyPlayer(
+        const ArenaClientState& arena,
+        const std::string& username)
+    {
+        for (int i = 0; i < (int)arena.players.size(); i++)
+        {
+            if (arena.players[i].name == username)
+                return i;
+        }
+
+        return -1;
+    }
+
+
+    bool ArenaLobbyColorUsedByOther(
+        const ArenaClientState& arena,
+        int colorIndex,
+        const std::string& username)
+    {
+        for (const ArenaLobbyPlayerClientState& player : arena.players)
+        {
+            if (
+                player.name != username &&
+                player.colorIndex == colorIndex
+            )
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+
+    void DrawArenaLobbyScreen(AppState& app)
+    {
+        ArenaClientState& lobby = app.arena;
+
+        DrawText(
+            "JENG ARENA",
+            58,
+            42,
+            40,
+            JENG_YELLOW
+        );
+
+        DrawText(
+            "ONLINE LOBBY",
+            61,
+            89,
+            22,
+            RAYWHITE
+        );
+
+        DrawText(
+            ArenaLobbyModeLabel(lobby.mode),
+            61,
+            130,
+            25,
+            JENG_RED
+        );
+
+        std::string ruleText;
+
+        if (lobby.mode == "TIME_FFA")
+        {
+            ruleText =
+                "TIME  " +
+                FormatMatchTime(
+                    (float)lobby.timeLimitSeconds
+                );
+        }
+        else
+        {
+            ruleText =
+                "SCORE TO WIN  " +
+                std::to_string(
+                    lobby.scoreLimit
+                );
+        }
+
+        DrawText(
+            ruleText.c_str(),
+            61,
+            165,
+            16,
+            Color{170, 174, 188, 255}
+        );
+
+        DrawText(
+            TextFormat(
+                "HOST  %s",
+                lobby.hostName.c_str()
+            ),
+            61,
+            190,
+            16,
+            Color{170, 174, 188, 255}
+        );
+
+        Rectangle playerPanel = {
+            55.0f,
+            230.0f,
+            650.0f,
+            315.0f
+        };
+
+        DrawRectangleRounded(
+            playerPanel,
+            0.025f,
+            8,
+            Color{18, 19, 24, 245}
+        );
+
+        DrawRectangleLinesEx(
+            playerPanel,
+            1.5f,
+            Color{70, 72, 82, 255}
+        );
+
+        DrawText(
+            TextFormat(
+                "PLAYERS  %d / %d",
+                (int)lobby.players.size(),
+                lobby.maxPlayers
+            ),
+            80,
+            251,
+            18,
+            JENG_YELLOW
+        );
+
+        bool teamMode =
+            ArenaLobbyIsTeamMode(
+                lobby.mode
+            );
+
+        for (int i = 0; i < (int)lobby.players.size(); i++)
+        {
+            const ArenaLobbyPlayerClientState& player =
+                lobby.players[i];
+
+            float y =
+                292.0f +
+                i * 38.0f;
+
+            Color rowColor =
+                player.name == app.username
+                ? JENG_YELLOW
+                : RAYWHITE;
+
+            DrawText(
+                player.name.c_str(),
+                82,
+                (int)y,
+                18,
+                rowColor
+            );
+
+            if (teamMode)
+            {
+                const char* teamText =
+                    player.team == 0
+                    ? "RED TEAM"
+                    : "BLUE TEAM";
+
+                Color teamColor =
+                    player.team == 0
+                    ? TEAM_RED
+                    : TEAM_BLUE;
+
+                DrawText(
+                    teamText,
+                    360,
+                    (int)y,
+                    17,
+                    teamColor
+                );
+            }
+            else if (
+                player.colorIndex >= 0 &&
+                player.colorIndex < ARENA_COLOR_COUNT
+            )
+            {
+                DrawRectangle(
+                    365,
+                    (int)y + 1,
+                    18,
+                    18,
+                    ARENA_COLORS[
+                        player.colorIndex
+                    ]
+                );
+
+                DrawText(
+                    ARENA_COLOR_NAMES[
+                        player.colorIndex
+                    ],
+                    394,
+                    (int)y,
+                    15,
+                    Color{170, 174, 188, 255}
+                );
+            }
+
+            DrawText(
+                player.ready
+                    ? "READY"
+                    : "NOT READY",
+                555,
+                (int)y,
+                16,
+                player.ready
+                    ? Color{90, 220, 130, 255}
+                    : Color{220, 105, 105, 255}
+            );
+        }
+
+        Rectangle controlPanel = {
+            735.0f,
+            230.0f,
+            490.0f,
+            315.0f
+        };
+
+        DrawRectangleRounded(
+            controlPanel,
+            0.025f,
+            8,
+            Color{18, 19, 24, 245}
+        );
+
+        DrawRectangleLinesEx(
+            controlPanel,
+            1.5f,
+            Color{70, 72, 82, 255}
+        );
+
+        bool isHost =
+            lobby.hostName == app.username;
+
+        int localIndex =
+            FindArenaLobbyPlayer(
+                lobby,
+                app.username
+            );
+
+        bool localReady =
+            localIndex >= 0 &&
+            lobby.players[localIndex].ready;
+
+        static std::string inviteInput;
+        static bool inviteInputActive = false;
+
+        if (isHost && lobby.phase == "LOBBY")
+        {
+            DrawText(
+                "INVITE PLAYER",
+                765,
+                253,
+                16,
+                JENG_RED
+            );
+
+            Rectangle inviteBox = {
+                765.0f,
+                285.0f,
+                275.0f,
+                43.0f
+            };
+
+            Rectangle inviteButton = {
+                1055.0f,
+                285.0f,
+                140.0f,
+                43.0f
+            };
+
+            Vector2 mouse =
+                GetArenaMousePosition();
+
+            if (
+                IsMouseButtonPressed(
+                    MOUSE_BUTTON_LEFT
+                )
+            )
+            {
+                inviteInputActive =
+                    CheckCollisionPointRec(
+                        mouse,
+                        inviteBox
+                    );
+            }
+
+            DrawRectangleRounded(
+                inviteBox,
+                0.12f,
+                8,
+                Color{31, 33, 40, 255}
+            );
+
+            DrawRectangleRoundedLinesEx(
+                inviteBox,
+                0.12f,
+                8,
+                inviteInputActive
+                    ? 2.0f
+                    : 1.0f,
+                inviteInputActive
+                    ? JENG_YELLOW
+                    : Color{80, 83, 94, 255}
+            );
+
+            if (inviteInput.empty())
+            {
+                DrawText(
+                    "username...",
+                    780,
+                    297,
+                    17,
+                    Color{125, 129, 143, 255}
+                );
+            }
+            else
+            {
+                DrawText(
+                    inviteInput.c_str(),
+                    780,
+                    297,
+                    17,
+                    RAYWHITE
+                );
+            }
+
+            if (inviteInputActive)
+            {
+                int key =
+                    GetCharPressed();
+
+                while (key > 0)
+                {
+                    if (
+                        key >= 32 &&
+                        key <= 125 &&
+                        inviteInput.size() < 16
+                    )
+                    {
+                        char c =
+                            (char)key;
+
+                        if (
+                            std::isalnum(
+                                (unsigned char)c
+                            ) ||
+                            c == '_' ||
+                            c == '-'
+                        )
+                        {
+                            inviteInput += c;
+                        }
+                    }
+
+                    key =
+                        GetCharPressed();
+                }
+
+                if (
+                    IsKeyPressed(
+                        KEY_BACKSPACE
+                    ) &&
+                    !inviteInput.empty()
+                )
+                {
+                    inviteInput.pop_back();
+                }
+            }
+
+            if (
+                MenuButton(
+                    inviteButton,
+                    "INVITE"
+                ) &&
+                !inviteInput.empty()
+            )
+            {
+                if (
+                    NetSendLine(
+                        "ARENA_INVITE|" +
+                        inviteInput
+                    )
+                )
+                {
+                    lobby.status =
+                        "Invitation sent to " +
+                        inviteInput +
+                        ".";
+                    inviteInput.clear();
+                }
+                else
+                {
+                    lobby.status =
+                        NetLastError();
+                }
+            }
+        }
+        else
+        {
+            DrawText(
+                isHost
+                    ? "LOBBY LOCKED"
+                    : "WAITING FOR HOST",
+                765,
+                253,
+                16,
+                JENG_RED
+            );
+        }
+
+        if (!teamMode && lobby.phase == "LOBBY")
+        {
+            DrawText(
+                "YOUR TANK COLOR",
+                765,
+                357,
+                15,
+                Color{160, 164, 178, 255}
+            );
+
+            int selectedColor =
+                localIndex >= 0
+                ? lobby.players[localIndex].colorIndex
+                : -1;
+
+            for (int i = 0; i < ARENA_COLOR_COUNT; i++)
+            {
+                int row = i / 8;
+                int col = i % 8;
+
+                Rectangle swatch = {
+                    765.0f + col * 49.0f,
+                    386.0f + row * 42.0f,
+                    30.0f,
+                    30.0f
+                };
+
+                bool taken =
+                    ArenaLobbyColorUsedByOther(
+                        lobby,
+                        i,
+                        app.username
+                    );
+
+                if (
+                    !taken &&
+                    ColorSwatchButton(
+                        swatch,
+                        ARENA_COLORS[i],
+                        selectedColor == i
+                    )
+                )
+                {
+                    NetSendLine(
+                        "ARENA_COLOR|" +
+                        std::to_string(i)
+                    );
+                }
+
+                if (taken)
+                {
+                    DrawLine(
+                        (int)swatch.x,
+                        (int)swatch.y,
+                        (int)(
+                            swatch.x +
+                            swatch.width
+                        ),
+                        (int)(
+                            swatch.y +
+                            swatch.height
+                        ),
+                        Color{20, 20, 24, 230}
+                    );
+
+                    DrawLine(
+                        (int)(
+                            swatch.x +
+                            swatch.width
+                        ),
+                        (int)swatch.y,
+                        (int)swatch.x,
+                        (int)(
+                            swatch.y +
+                            swatch.height
+                        ),
+                        Color{20, 20, 24, 230}
+                    );
+                }
+            }
+        }
+        else if (teamMode)
+        {
+            DrawText(
+                "TEAM COLORS",
+                765,
+                357,
+                15,
+                Color{160, 164, 178, 255}
+            );
+
+            if (localIndex >= 0)
+            {
+                int team =
+                    lobby.players[
+                        localIndex
+                    ].team;
+
+                DrawText(
+                    team == 0
+                        ? "YOU ARE RED TEAM"
+                        : "YOU ARE BLUE TEAM",
+                    765,
+                    390,
+                    21,
+                    team == 0
+                        ? TEAM_RED
+                        : TEAM_BLUE
+                );
+            }
+        }
+
+        Rectangle readyButton = {
+            55.0f,
+            570.0f,
+            270.0f,
+            48.0f
+        };
+
+        if (
+            lobby.phase == "LOBBY" &&
+            MenuButton(
+                readyButton,
+                localReady
+                    ? "UNREADY"
+                    : "READY",
+                localReady
+            )
+        )
+        {
+            NetSendLine(
+                "ARENA_READY"
+            );
+        }
+
+        if (isHost)
+        {
+            Rectangle startButton = {
+                345.0f,
+                570.0f,
+                360.0f,
+                48.0f
+            };
+
+            if (
+                lobby.phase == "LOBBY" &&
+                MenuButton(
+                    startButton,
+                    "START ONLINE MATCH",
+                    true
+                )
+            )
+            {
+                NetSendLine(
+                    "ARENA_START"
+                );
+            }
+        }
+
+        Rectangle leaveButton = {
+            735.0f,
+            570.0f,
+            220.0f,
+            48.0f
+        };
+
+        if (
+            MenuButton(
+                leaveButton,
+                "LEAVE LOBBY"
+            )
+        )
+        {
+            NetSendLine(
+                "ARENA_LEAVE"
+            );
+
+            lobby.active = false;
+            lobby.players.clear();
+            lobby.phase = "WAITING";
+            lobby.status =
+                "Left Arena lobby.";
+        }
+
+        DrawText(
+            lobby.status.c_str(),
+            55,
+            642,
+            16,
+            lobby.phase == "STARTING"
+                ? JENG_YELLOW
+                : Color{160, 164, 178, 255}
+        );
+
+        if (lobby.phase == "STARTING")
+        {
+            DrawText(
+                "LOBBY NETWORKING COMPLETE // REALTIME COMBAT SYNC IS THE NEXT PHASE",
+                55,
+                674,
+                14,
+                JENG_YELLOW
+            );
+        }
     }
 
 
@@ -1846,12 +3059,23 @@ namespace
         const std::vector<Combatant>& combatants,
         const MatchSettings& settings,
         float timeRemaining,
-        const MatchResult& result)
+        const MatchResult& result,
+        int localPlayerIndex = 0)
     {
         if (combatants.empty())
             return;
 
-        const Combatant& player = combatants[0];
+        localPlayerIndex =
+            std::max(
+                0,
+                std::min(
+                    localPlayerIndex,
+                    (int)combatants.size() - 1
+                )
+            );
+
+        const Combatant& player =
+            combatants[localPlayerIndex];
 
         DrawRectangle(
             18,
@@ -1955,13 +3179,13 @@ namespace
         DrawRectangle(
             18,
             SCREEN_HEIGHT - 62,
-            815,
+            1244,
             44,
             HUD_BG
         );
 
         DrawText(
-            "WASD Move   RMB Camera   LMB Fire   HOLD TAB Scoreboard   R Rematch   M Setup   F11 Fullscreen   ESC Back",
+            "WASD Move   Mouse Camera   LMB Fire   RMB Mine   HOLD TAB Scoreboard   R Rematch   M Setup   F11 Fullscreen   ESC Back",
             30,
             SCREEN_HEIGHT - 48,
             17,
@@ -2060,34 +3284,6 @@ namespace
             );
         }
 
-        int crosshairX =
-            SCREEN_WIDTH / 2;
-
-        int crosshairY =
-            SCREEN_HEIGHT / 2;
-
-        DrawCircleLines(
-            crosshairX,
-            crosshairY,
-            8.0f,
-            JENG_YELLOW
-        );
-
-        DrawLine(
-            crosshairX - 12,
-            crosshairY,
-            crosshairX + 12,
-            crosshairY,
-            JENG_YELLOW
-        );
-
-        DrawLine(
-            crosshairX,
-            crosshairY - 12,
-            crosshairX,
-            crosshairY + 12,
-            JENG_YELLOW
-        );
     }
 
 
@@ -2308,8 +3504,6 @@ namespace
 
     float currentCameraDistance = cameraDistance;
 
-    bool cameraDragging = false;
-    float cameraLastMouseX = 0.0f;
 
     Model bodyModel{};
     Model turretModel{};
@@ -2321,9 +3515,53 @@ namespace
 
     std::vector<Combatant> combatants;
     std::vector<Projectile> projectiles;
+    std::vector<Mine> mines;
+    std::vector<DeathExplosion> deathExplosions;
+    std::vector<ExplosionParticle> explosionParticles;
+    std::vector<std::string> trackedDeathNames;
+    std::vector<int> trackedDeathCounts;
 
     bool inSetup = true;
     float timeRemaining = DEFAULT_TIME_LIMIT;
+
+    // Online match render/prediction state. The server owns the real
+    // positions; the local client predicts its own tank between snapshots
+    // and interpolates remote tanks toward server targets.
+    bool onlineMatchInitialized = false;
+    int onlineLocalPlayerIndex = -1;
+    int onlineLastWorldSequence = -1;
+    int onlineInputSequence = 0;
+    float onlineInputSendAccumulator = 0.0f;
+
+    std::vector<Vector3> onlineTargetPositions;
+    std::vector<float> onlineTargetBodyYaws;
+    std::vector<float> onlineTargetAimYaws;
+
+
+    void BeginArenaMouseLook()
+    {
+        HideCursor();
+        CenterArenaMouse();
+    }
+
+
+    void UpdateArenaMouseLook()
+    {
+        if (!IsWindowFocused())
+            return;
+
+        HideCursor();
+
+        Vector2 mouse = GetArenaMousePosition();
+        float mouseDeltaX =
+            mouse.x - SCREEN_WIDTH * 0.5f;
+
+        cameraYaw -=
+            mouseDeltaX *
+            cameraSensitivity;
+
+        CenterArenaMouse();
+    }
 
 
     void BuildArenaObstacles()
@@ -2385,7 +3623,6 @@ namespace
     {
         cameraYaw = 0.0f;
         currentCameraDistance = cameraDistance;
-        cameraDragging = false;
 
         camera.position = {
             0.0f,
@@ -2410,6 +3647,1035 @@ namespace
     }
 
 
+    void ResetOnlineMatchState()
+    {
+        onlineMatchInitialized = false;
+        onlineLocalPlayerIndex = -1;
+        onlineLastWorldSequence = -1;
+        onlineInputSequence = 0;
+        onlineInputSendAccumulator = 0.0f;
+
+        onlineTargetPositions.clear();
+        onlineTargetBodyYaws.clear();
+        onlineTargetAimYaws.clear();
+
+        combatants.clear();
+        projectiles.clear();
+        mines.clear();
+        deathExplosions.clear();
+        explosionParticles.clear();
+        trackedDeathNames.clear();
+        trackedDeathCounts.clear();
+    }
+
+
+    Color OnlineCombatantColor(
+        const ArenaWorldPlayerClientState& player,
+        bool teamMode)
+    {
+        if (teamMode)
+        {
+            return
+                player.team == 0
+                ? TEAM_RED
+                : TEAM_BLUE;
+        }
+
+        if (
+            player.colorIndex >= 0 &&
+            player.colorIndex < ARENA_COLOR_COUNT
+        )
+        {
+            return ARENA_COLORS[player.colorIndex];
+        }
+
+        return WHITE;
+    }
+
+
+    Color OnlineMineColor(
+        const ArenaMineClientState& mine,
+        bool teamMode)
+    {
+        if (teamMode)
+        {
+            return
+                mine.team == 0
+                ? TEAM_RED
+                : TEAM_BLUE;
+        }
+
+        if (
+            mine.colorIndex >= 0 &&
+            mine.colorIndex < ARENA_COLOR_COUNT
+        )
+        {
+            return ARENA_COLORS[mine.colorIndex];
+        }
+
+        return WHITE;
+    }
+
+
+    bool BuildOnlineCombatants(
+        const AppState& app)
+    {
+        if (app.arena.worldPlayers.empty())
+            return false;
+
+        settings = MatchSettings{};
+        settings.mode =
+            ArenaModeFromPacketName(
+                app.arena.mode
+            );
+        settings.playerCount =
+            (int)app.arena.worldPlayers.size();
+        settings.scoreLimit =
+            app.arena.scoreLimit;
+        settings.timeLimitSeconds =
+            (float)app.arena.timeLimitSeconds;
+
+        NormalizeSettings(settings);
+
+        combatants.clear();
+        onlineTargetPositions.clear();
+        onlineTargetBodyYaws.clear();
+        onlineTargetAimYaws.clear();
+
+        onlineLocalPlayerIndex = -1;
+
+        bool teamMode =
+            IsTeamMode(settings);
+
+        for (
+            int i = 0;
+            i < (int)app.arena.worldPlayers.size();
+            i++
+        )
+        {
+            const ArenaWorldPlayerClientState& world =
+                app.arena.worldPlayers[i];
+
+            Combatant combatant;
+            combatant.name = world.name;
+            combatant.position = {
+                world.x,
+                0.0f,
+                world.z
+            };
+            combatant.spawn = combatant.position;
+            combatant.bodyYaw = world.bodyYaw;
+            combatant.aimDirection =
+                ArenaDirectionFromYaw(
+                    world.aimYaw
+                );
+            combatant.health = world.health;
+            combatant.alive = world.alive;
+            combatant.kills = world.kills;
+            combatant.deaths = world.deaths;
+            combatant.damageDealt = world.damageDealt;
+            combatant.damageTaken = world.damageTaken;
+            combatant.respawnTimer = world.respawnTimer;
+            combatant.human =
+                world.name == app.username;
+            combatant.team = world.team;
+            combatant.colorIndex = world.colorIndex;
+            combatant.color =
+                OnlineCombatantColor(
+                    world,
+                    teamMode
+                );
+
+            if (combatant.human)
+                onlineLocalPlayerIndex = i;
+
+            combatants.push_back(combatant);
+            onlineTargetPositions.push_back(
+                combatant.position
+            );
+            onlineTargetBodyYaws.push_back(
+                world.bodyYaw
+            );
+            onlineTargetAimYaws.push_back(
+                world.aimYaw
+            );
+        }
+
+        if (
+            onlineLocalPlayerIndex < 0 ||
+            onlineLocalPlayerIndex >=
+                (int)combatants.size()
+        )
+        {
+            return false;
+        }
+
+        result = MatchResult{};
+        projectiles.clear();
+        mines.clear();
+
+        for (const ArenaMineClientState& worldMine : app.arena.worldMines)
+        {
+            Mine mine;
+            mine.position = {worldMine.x, 0.0f, worldMine.z};
+            mine.colorIndex = worldMine.colorIndex;
+            mine.team = worldMine.team;
+            mine.color = OnlineMineColor(worldMine, teamMode);
+            mine.active = true;
+            mines.push_back(mine);
+        }
+
+        timeRemaining =
+            app.arena.timeRemainingSeconds > 0.0f
+            ? app.arena.timeRemainingSeconds
+            : settings.timeLimitSeconds;
+
+        onlineLastWorldSequence =
+            app.arena.worldSequence;
+        onlineInputSequence = 0;
+        onlineInputSendAccumulator = 0.0f;
+        onlineMatchInitialized = true;
+
+        deathExplosions.clear();
+        explosionParticles.clear();
+        SyncDeathExplosionTracker(
+            combatants,
+            trackedDeathNames,
+            trackedDeathCounts
+        );
+
+        ResetArenaCamera();
+        BeginArenaMouseLook();
+
+        return true;
+    }
+
+
+    int FindOnlineCombatantByName(
+        const std::string& name)
+    {
+        for (
+            int i = 0;
+            i < (int)combatants.size();
+            i++
+        )
+        {
+            if (combatants[i].name == name)
+                return i;
+        }
+
+        return -1;
+    }
+
+
+    bool OnlineWorldLayoutChanged(
+        const AppState& app)
+    {
+        if (
+            app.arena.worldPlayers.size() !=
+            combatants.size()
+        )
+        {
+            return true;
+        }
+
+        for (
+            const ArenaWorldPlayerClientState& world :
+            app.arena.worldPlayers
+        )
+        {
+            if (
+                FindOnlineCombatantByName(
+                    world.name
+                ) < 0
+            )
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+
+    void ApplyOnlineWorldSnapshot(
+        const AppState& app)
+    {
+        if (!onlineMatchInitialized)
+        {
+            BuildOnlineCombatants(app);
+            return;
+        }
+
+        if (
+            app.arena.worldSequence ==
+            onlineLastWorldSequence
+        )
+        {
+            return;
+        }
+
+        if (OnlineWorldLayoutChanged(app))
+        {
+            BuildOnlineCombatants(app);
+            return;
+        }
+
+        bool teamMode =
+            IsTeamMode(settings);
+
+        for (
+            const ArenaWorldPlayerClientState& world :
+            app.arena.worldPlayers
+        )
+        {
+            int index =
+                FindOnlineCombatantByName(
+                    world.name
+                );
+
+            if (index < 0)
+                continue;
+
+            Vector3 serverPosition = {
+                world.x,
+                0.0f,
+                world.z
+            };
+
+            onlineTargetPositions[index] =
+                serverPosition;
+            onlineTargetBodyYaws[index] =
+                world.bodyYaw;
+            onlineTargetAimYaws[index] =
+                world.aimYaw;
+
+            Combatant& combatant =
+                combatants[index];
+
+            combatant.team = world.team;
+            combatant.colorIndex =
+                world.colorIndex;
+            combatant.color =
+                OnlineCombatantColor(
+                    world,
+                    teamMode
+                );
+            combatant.health = world.health;
+            combatant.alive = world.alive;
+            combatant.kills = world.kills;
+            combatant.deaths = world.deaths;
+            combatant.damageDealt = world.damageDealt;
+            combatant.damageTaken = world.damageTaken;
+            combatant.respawnTimer = world.respawnTimer;
+
+            // Large disagreement means prediction diverged badly or the
+            // server corrected a collision. Snap instead of visibly sliding
+            // through geometry for several frames.
+            float error =
+                DistanceXZ(
+                    combatant.position,
+                    serverPosition
+                );
+
+            if (
+                index == onlineLocalPlayerIndex &&
+                error > 2.25f
+            )
+            {
+                combatant.position =
+                    serverPosition;
+            }
+        }
+
+        timeRemaining = app.arena.timeRemainingSeconds;
+
+        projectiles.clear();
+        for (
+            const ArenaProjectileClientState& worldProjectile :
+            app.arena.worldProjectiles
+        )
+        {
+            Projectile projectile;
+            projectile.position = {
+                worldProjectile.x,
+                worldProjectile.y,
+                worldProjectile.z
+            };
+            projectile.active = true;
+            projectiles.push_back(projectile);
+        }
+
+        mines.clear();
+        for (
+            const ArenaMineClientState& worldMine :
+            app.arena.worldMines
+        )
+        {
+            Mine mine;
+            mine.position = {
+                worldMine.x,
+                0.0f,
+                worldMine.z
+            };
+            mine.colorIndex = worldMine.colorIndex;
+            mine.team = worldMine.team;
+            mine.color = OnlineMineColor(worldMine, teamMode);
+            mine.active = true;
+            mines.push_back(mine);
+        }
+
+        onlineLastWorldSequence =
+            app.arena.worldSequence;
+    }
+
+
+    void SmoothOnlineCombatants(float dt)
+    {
+        if (!onlineMatchInitialized)
+            return;
+
+        for (
+            int i = 0;
+            i < (int)combatants.size();
+            i++
+        )
+        {
+            Combatant& combatant =
+                combatants[i];
+
+            bool local =
+                i == onlineLocalPlayerIndex;
+
+            // Remote players interpolate aggressively toward the latest
+            // snapshot. The local tank only receives a gentle correction
+            // because its immediate movement is client-predicted.
+            float positionSpeed =
+                local ? 4.0f : 14.0f;
+
+            float alpha =
+                1.0f -
+                std::exp(
+                    -positionSpeed * dt
+                );
+
+            combatant.position.x +=
+                (
+                    onlineTargetPositions[i].x -
+                    combatant.position.x
+                ) *
+                alpha;
+
+            combatant.position.z +=
+                (
+                    onlineTargetPositions[i].z -
+                    combatant.position.z
+                ) *
+                alpha;
+
+            float rotationAlpha =
+                1.0f -
+                std::exp(
+                    -(local ? 6.0f : 16.0f) * dt
+                );
+
+            if (!local)
+            {
+                combatant.bodyYaw =
+                    ArenaLerpAngleDegrees(
+                        combatant.bodyYaw,
+                        onlineTargetBodyYaws[i],
+                        rotationAlpha
+                    );
+
+                float currentAimYaw =
+                    DirectionYaw(
+                        combatant.aimDirection
+                    );
+
+                float aimYaw =
+                    ArenaLerpAngleDegrees(
+                        currentAimYaw,
+                        onlineTargetAimYaws[i],
+                        rotationAlpha
+                    );
+
+                combatant.aimDirection =
+                    ArenaDirectionFromYaw(
+                        aimYaw
+                    );
+            }
+        }
+    }
+
+
+    void DrawOnlineCombatBanner(
+        const AppState& app)
+    {
+        DrawText(
+            "ONLINE SERVER-AUTHORIZED COMBAT",
+            32,
+            147,
+            15,
+            Color{90, 220, 130, 255}
+        );
+
+        DrawText(
+            TextFormat(
+                "WORLD SNAPSHOT  %d",
+                app.arena.worldSequence
+            ),
+            32,
+            166,
+            14,
+            Color{165, 168, 180, 255}
+        );
+    }
+
+
+    void DrawOnlineLoadingScreen(
+        const AppState& app)
+    {
+        BeginTextureMode(arenaTarget);
+
+        ClearBackground(
+            Color{11, 12, 16, 255}
+        );
+
+        DrawText(
+            "JENG ARENA",
+            58,
+            42,
+            40,
+            JENG_YELLOW
+        );
+
+        DrawText(
+            "STARTING ONLINE MATCH",
+            61,
+            96,
+            24,
+            JENG_RED
+        );
+
+        DrawText(
+            app.arena.status.c_str(),
+            61,
+            145,
+            18,
+            RAYWHITE
+        );
+
+        DrawText(
+            "Waiting for the first authoritative world snapshot...",
+            61,
+            184,
+            16,
+            Color{160, 164, 178, 255}
+        );
+
+        EndTextureMode();
+    }
+
+
+    void UpdateOnlineArenaMatch(
+        AppState& app,
+        float dt)
+    {
+        if (app.arena.worldPlayers.empty())
+        {
+            ShowCursor();
+            DrawOnlineLoadingScreen(app);
+            return;
+        }
+
+        if (!onlineMatchInitialized)
+        {
+            if (!BuildOnlineCombatants(app))
+            {
+                DrawOnlineLoadingScreen(app);
+                return;
+            }
+        }
+        else
+        {
+            ApplyOnlineWorldSnapshot(app);
+        }
+
+        DetectDeathExplosions(
+            combatants,
+            trackedDeathNames,
+            trackedDeathCounts,
+            deathExplosions,
+            explosionParticles
+        );
+
+        UpdateDeathExplosions(
+            deathExplosions,
+            explosionParticles,
+            dt
+        );
+
+        if (
+            onlineLocalPlayerIndex < 0 ||
+            onlineLocalPlayerIndex >=
+                (int)combatants.size()
+        )
+        {
+            DrawOnlineLoadingScreen(app);
+            return;
+        }
+
+        // Camera now follows horizontal mouse movement continuously.
+        UpdateArenaMouseLook();
+
+        Combatant& player =
+            combatants[onlineLocalPlayerIndex];
+
+        // RMB is reserved for placing a server-authoritative mine.
+        if (
+            player.alive &&
+            IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)
+        )
+        {
+            NetSendLine("ARENA_MINE");
+        }
+
+        Vector3 cameraForward = {
+            -std::sin(cameraYaw),
+            0.0f,
+            -std::cos(cameraYaw)
+        };
+
+        Vector3 cameraRight = {
+            std::cos(cameraYaw),
+            0.0f,
+            -std::sin(cameraYaw)
+        };
+
+        Vector3 movement = {
+            0.0f,
+            0.0f,
+            0.0f
+        };
+
+        if (player.alive)
+        {
+            if (IsKeyDown(KEY_W))
+                movement = Add(movement, cameraForward);
+
+            if (IsKeyDown(KEY_S))
+                movement = Add(
+                    movement,
+                    Scale(cameraForward, -1.0f)
+                );
+
+            if (IsKeyDown(KEY_A))
+                movement = Add(
+                    movement,
+                    Scale(cameraRight, -1.0f)
+                );
+
+            if (IsKeyDown(KEY_D))
+                movement = Add(movement, cameraRight);
+        }
+
+        movement = NormalizeXZ(movement);
+
+        // Immediate local prediction. The authoritative server sends the
+        // position back and SmoothOnlineCombatants() reconciles it.
+        if (player.alive)
+        {
+            MoveCombatant(
+                player,
+                movement,
+                dt,
+                PLAYER_SPEED,
+                obstacles
+            );
+        }
+
+        SmoothOnlineCombatants(dt);
+
+        // ----------------------------------------------------
+        // Third-person camera with the same wall collision used locally.
+        // ----------------------------------------------------
+        camera.target = {
+            player.position.x,
+            player.position.y +
+                cameraTargetHeight,
+            player.position.z
+        };
+
+        Vector3 desiredCameraPosition = {
+            player.position.x +
+                std::sin(cameraYaw) *
+                cameraDistance,
+
+            player.position.y +
+                cameraHeight,
+
+            player.position.z +
+                std::cos(cameraYaw) *
+                cameraDistance
+        };
+
+        Vector3 collisionSafeCameraPosition =
+            ResolveCameraCollision(
+                camera.target,
+                desiredCameraPosition,
+                obstacles
+            );
+
+        Vector3 desiredCameraDirection =
+            Subtract(
+                desiredCameraPosition,
+                camera.target
+            );
+
+        float desiredCameraRayLength =
+            Length3D(
+                desiredCameraDirection
+            );
+
+        Vector3 cameraDirection = {
+            0.0f,
+            0.0f,
+            1.0f
+        };
+
+        if (desiredCameraRayLength > 0.0001f)
+        {
+            cameraDirection =
+                Scale(
+                    desiredCameraDirection,
+                    1.0f /
+                        desiredCameraRayLength
+                );
+        }
+
+        float collisionSafeDistance =
+            Length3D(
+                Subtract(
+                    collisionSafeCameraPosition,
+                    camera.target
+                )
+            );
+
+        if (
+            collisionSafeDistance <
+            currentCameraDistance
+        )
+        {
+            currentCameraDistance =
+                collisionSafeDistance;
+        }
+        else
+        {
+            float returnAlpha =
+                1.0f -
+                std::exp(
+                    -cameraReturnSpeed *
+                    dt
+                );
+
+            currentCameraDistance +=
+                (
+                    collisionSafeDistance -
+                    currentCameraDistance
+                ) *
+                returnAlpha;
+        }
+
+        camera.position =
+            Add(
+                camera.target,
+                Scale(
+                    cameraDirection,
+                    currentCameraDistance
+                )
+            );
+
+        Vector3 cameraAimDirection =
+            NormalizeXZ(
+                Subtract(
+                    camera.target,
+                    camera.position
+                )
+            );
+
+        if (
+            player.alive &&
+            LengthXZ(
+                cameraAimDirection
+            ) > 0.001f
+        )
+        {
+            player.aimDirection =
+                cameraAimDirection;
+        }
+
+        // Send whether LMB is currently held. The server owns the actual
+        // fire-rate cooldown, so a shot request cannot be lost between
+        // the client's 30 Hz network input packets.
+        bool fireRequested =
+            player.alive &&
+            IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+
+        // ----------------------------------------------------
+        // Send movement + aim + fire input at 30 Hz.
+        // ----------------------------------------------------
+        onlineInputSendAccumulator += dt;
+
+        constexpr float INPUT_INTERVAL =
+            1.0f / 30.0f;
+
+        if (
+            onlineInputSendAccumulator >=
+            INPUT_INTERVAL
+        )
+        {
+            onlineInputSendAccumulator =
+                std::fmod(
+                    onlineInputSendAccumulator,
+                    INPUT_INTERVAL
+                );
+
+            onlineInputSequence++;
+
+            float aimYaw =
+                DirectionYaw(
+                    player.aimDirection
+                );
+
+            std::string packet =
+                std::string("ARENA_INPUT|") +
+                std::to_string(
+                    onlineInputSequence
+                ) +
+                "|" +
+                std::to_string(movement.x) +
+                "|" +
+                std::to_string(movement.z) +
+                "|" +
+                std::to_string(aimYaw) +
+                "|" +
+                std::to_string(fireRequested ? 1 : 0);
+
+            NetSendLine(packet);
+        }
+
+        // ----------------------------------------------------
+        // Render
+        // ----------------------------------------------------
+        BeginTextureMode(arenaTarget);
+
+        ClearBackground(
+            Color{11, 12, 16, 255}
+        );
+
+        BeginMode3D(camera);
+
+        DrawArena(obstacles);
+
+        for (Combatant& combatant : combatants)
+        {
+            DrawTank(
+                combatant,
+                bodyModel,
+                turretModel
+            );
+        }
+
+        DrawProjectiles(projectiles);
+        DrawMines(mines);
+        DrawDeathExplosions(
+            deathExplosions,
+            explosionParticles
+        );
+
+        EndMode3D();
+
+        DrawNameplates(
+            combatants,
+            camera,
+            obstacles,
+            settings
+        );
+
+        DrawHud(
+            combatants,
+            settings,
+            timeRemaining,
+            result,
+            onlineLocalPlayerIndex
+        );
+
+        DrawOnlineCombatBanner(app);
+
+        if (IsKeyDown(KEY_TAB))
+        {
+            DrawScoreboardOverlay(
+                combatants,
+                settings,
+                timeRemaining
+            );
+        }
+
+        EndTextureMode();
+    }
+
+
+    void DrawOnlinePostGameScreen(AppState& app, float dt)
+    {
+        ShowCursor();
+
+        if (!app.arena.worldPlayers.empty())
+        {
+            if (!onlineMatchInitialized)
+                BuildOnlineCombatants(app);
+            else
+                ApplyOnlineWorldSnapshot(app);
+        }
+
+        DetectDeathExplosions(
+            combatants,
+            trackedDeathNames,
+            trackedDeathCounts,
+            deathExplosions,
+            explosionParticles
+        );
+
+        UpdateDeathExplosions(
+            deathExplosions,
+            explosionParticles,
+            dt
+        );
+
+        BeginTextureMode(arenaTarget);
+
+        ClearBackground(
+            Color{11, 12, 16, 255}
+        );
+
+        // Keep a frozen view of the final battlefield behind the results.
+        if (!combatants.empty())
+        {
+            BeginMode3D(camera);
+
+            DrawArena(obstacles);
+
+            for (Combatant& combatant : combatants)
+            {
+                DrawTank(
+                    combatant,
+                    bodyModel,
+                    turretModel
+                );
+            }
+
+            DrawProjectiles(projectiles);
+            DrawMines(mines);
+            DrawDeathExplosions(
+                deathExplosions,
+                explosionParticles
+            );
+
+            EndMode3D();
+        }
+
+        DrawScoreboardOverlay(
+            combatants,
+            settings,
+            timeRemaining
+        );
+
+        DrawText(
+            "MATCH COMPLETE",
+            SCREEN_WIDTH / 2 -
+                MeasureText("MATCH COMPLETE", 28) / 2,
+            24,
+            28,
+            JENG_YELLOW
+        );
+
+        int resultWidth =
+            MeasureText(
+                app.arena.status.c_str(),
+                18
+            );
+
+        DrawText(
+            app.arena.status.c_str(),
+            SCREEN_WIDTH / 2 - resultWidth / 2,
+            60,
+            18,
+            RAYWHITE
+        );
+
+        Rectangle playAgainButton = {
+            SCREEN_WIDTH / 2.0f - 290.0f,
+            642.0f,
+            260.0f,
+            50.0f
+        };
+
+        Rectangle exitButton = {
+            SCREEN_WIDTH / 2.0f + 30.0f,
+            642.0f,
+            260.0f,
+            50.0f
+        };
+
+        if (
+            MenuButton(
+                playAgainButton,
+                "PLAY AGAIN",
+                true
+            )
+        )
+        {
+            if (NetSendLine("ARENA_PLAY_AGAIN"))
+            {
+                app.arena.status =
+                    "Returning the party to the Arena lobby...";
+            }
+            else
+            {
+                app.arena.status = NetLastError();
+            }
+        }
+
+        if (
+            MenuButton(
+                exitButton,
+                "EXIT PARTY"
+            )
+        )
+        {
+            NetSendLine("ARENA_LEAVE");
+
+            app.arena.active = false;
+            app.arena.matchActive = false;
+            app.arena.startSignalReceived = false;
+            app.arena.players.clear();
+            app.arena.worldPlayers.clear();
+            app.arena.worldProjectiles.clear();
+            app.arena.worldMines.clear();
+            app.arena.timeRemainingSeconds = 0.0f;
+            app.arena.phase = "WAITING";
+            app.arena.status =
+                "Left the Arena party.";
+
+            ResetOnlineMatchState();
+            inSetup = true;
+            ShowCursor();
+        }
+
+        EndTextureMode();
+    }
+
+
     void StartArenaMatch()
     {
         NormalizeSettings(settings);
@@ -2421,13 +4687,21 @@ namespace
         );
 
         projectiles.clear();
+        mines.clear();
+        deathExplosions.clear();
+        explosionParticles.clear();
+        SyncDeathExplosionTracker(
+            combatants,
+            trackedDeathNames,
+            trackedDeathCounts
+        );
 
         result = MatchResult{};
         timeRemaining = settings.timeLimitSeconds;
 
         ResetArenaCamera();
 
-        HideCursor();
+        BeginArenaMouseLook();
         inSetup = false;
     }
 
@@ -2435,7 +4709,6 @@ namespace
     void ReturnArenaToSetup()
     {
         inSetup = true;
-        cameraDragging = false;
         ShowCursor();
     }
 
@@ -2494,6 +4767,11 @@ namespace
 
         combatants.clear();
         projectiles.clear();
+        mines.clear();
+        deathExplosions.clear();
+        explosionParticles.clear();
+        trackedDeathNames.clear();
+        trackedDeathCounts.clear();
 
         inSetup = true;
         timeRemaining = settings.timeLimitSeconds;
@@ -2510,15 +4788,66 @@ namespace
 
 
 void ArenaUpdateAndRender(
-    const std::string& username)
+    AppState& app)
 {
-    EnsureArenaInitialized(username);
+    EnsureArenaInitialized(
+        app.username
+    );
 
     float dt =
         std::min(
             GetFrameTime(),
             1.0f / 30.0f
         );
+
+    // ========================================================
+    // ONLINE LOBBY
+    // ========================================================
+
+    if (
+        app.arena.active &&
+        app.arena.phase == "PLAYING"
+    )
+    {
+        UpdateOnlineArenaMatch(
+            app,
+            dt
+        );
+        return;
+    }
+
+    if (
+        app.arena.active &&
+        app.arena.phase == "POSTGAME"
+    )
+    {
+        DrawOnlinePostGameScreen(app, dt);
+        return;
+    }
+
+    if (app.arena.active)
+    {
+        if (onlineMatchInitialized)
+            ResetOnlineMatchState();
+
+        ShowCursor();
+
+        BeginTextureMode(
+            arenaTarget
+        );
+
+        ClearBackground(
+            Color{11, 12, 16, 255}
+        );
+
+        DrawArenaLobbyScreen(
+            app
+        );
+
+        EndTextureMode();
+        return;
+    }
+
 
     // ========================================================
     // MATCH SETUP
@@ -2537,7 +4866,8 @@ void ArenaUpdateAndRender(
         bool startMatch =
             DrawSetupScreen(
                 settings,
-                arenaUsername
+                arenaUsername,
+                app
             );
 
         EndTextureMode();
@@ -2574,55 +4904,44 @@ void ArenaUpdateAndRender(
         );
 
         projectiles.clear();
+        mines.clear();
+        deathExplosions.clear();
+        explosionParticles.clear();
+        SyncDeathExplosionTracker(
+            combatants,
+            trackedDeathNames,
+            trackedDeathCounts
+        );
 
         result = MatchResult{};
         timeRemaining =
             settings.timeLimitSeconds;
 
         ResetArenaCamera();
-        HideCursor();
+        BeginArenaMouseLook();
     }
 
 
-    // ========================================================
-    // RMB HORIZONTAL CAMERA DRAG
-    // ========================================================
-
-    if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT))
-    {
-        cameraDragging = true;
-        cameraLastMouseX =
-            GetArenaMousePosition().x;
-    }
-
-    if (
-        cameraDragging &&
-        IsMouseButtonDown(MOUSE_BUTTON_RIGHT)
-    )
-    {
-        float currentMouseX =
-            GetArenaMousePosition().x;
-
-        float mouseDeltaX =
-            currentMouseX -
-            cameraLastMouseX;
-
-        cameraYaw -=
-            mouseDeltaX *
-            cameraSensitivity;
-
-        cameraLastMouseX =
-            currentMouseX;
-    }
-
-    if (IsMouseButtonReleased(MOUSE_BUTTON_RIGHT))
-    {
-        cameraDragging = false;
-    }
+    // Camera follows horizontal mouse movement continuously.
+    UpdateArenaMouseLook();
 
 
     Combatant& playerRef =
         combatants[0];
+
+    // RMB places a mine in local test mode too.
+    if (
+        !result.finished &&
+        playerRef.alive &&
+        IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)
+    )
+    {
+        PlaceLocalMine(
+            0,
+            combatants,
+            mines
+        );
+    }
 
 
     // ========================================================
@@ -2979,11 +5298,31 @@ void ArenaUpdateAndRender(
             projectiles.end()
         );
 
+        UpdateLocalMines(
+            mines,
+            combatants,
+            settings
+        );
+
         UpdateRespawns(
             combatants,
             dt
         );
     }
+
+    DetectDeathExplosions(
+        combatants,
+        trackedDeathNames,
+        trackedDeathCounts,
+        deathExplosions,
+        explosionParticles
+    );
+
+    UpdateDeathExplosions(
+        deathExplosions,
+        explosionParticles,
+        dt
+    );
 
 
     // Evaluate after all gameplay for this frame.
@@ -3028,6 +5367,11 @@ void ArenaUpdateAndRender(
     }
 
     DrawProjectiles(projectiles);
+    DrawMines(mines);
+    DrawDeathExplosions(
+        deathExplosions,
+        explosionParticles
+    );
 
     EndMode3D();
 
@@ -3080,6 +5424,34 @@ void ArenaHandleEscape(AppState& app)
         return;
     }
 
+    if (app.arena.active)
+    {
+        NetSendLine(
+            "ARENA_LEAVE"
+        );
+
+        app.arena.active = false;
+        app.arena.matchActive = false;
+        app.arena.startSignalReceived = false;
+        app.arena.players.clear();
+        app.arena.worldPlayers.clear();
+        app.arena.worldProjectiles.clear();
+        app.arena.worldMines.clear();
+        app.arena.timeRemainingSeconds = 0.0f;
+        app.arena.phase = "WAITING";
+        app.arena.status =
+            "Left Arena lobby.";
+
+        ResetOnlineMatchState();
+
+        app.gameView =
+            GameView::HOME;
+
+        ShowCursor();
+        SetTargetFPS(60);
+        return;
+    }
+
     if (!inSetup)
     {
         ReturnArenaToSetup();
@@ -3106,8 +5478,7 @@ void ArenaShutdown()
     UnloadRenderTexture(arenaTarget);
 
     obstacles.clear();
-    combatants.clear();
-    projectiles.clear();
+    ResetOnlineMatchState();
 
     arenaInitialized = false;
 

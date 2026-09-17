@@ -142,7 +142,9 @@ namespace
         }
     }
 
-    constexpr float ARENA_HALF = 19.0f;
+    constexpr float ARENA_HALF = 25.0f;
+    constexpr float ARENA_WALL_CENTER = 26.0f;
+    constexpr float ARENA_VISUAL_SIZE = 52.0f;
     constexpr float TANK_RADIUS = 0.82f;
     constexpr float PLAYER_SPEED = 7.0f;
     constexpr float BOT_SPEED = 4.0f;
@@ -176,6 +178,59 @@ namespace
     constexpr Color WALL_COLOR = {64, 68, 78, 255};
     constexpr Color OBSTACLE_COLOR = {82, 87, 101, 255};
     constexpr Color HUD_BG = {10, 11, 15, 215};
+
+
+    // --------------------------------------------------------
+    // REACTOR YARD MATERIALS
+    // --------------------------------------------------------
+    // These are loaded once when Arena initializes.  The path is relative
+    // to the JENG CHAT working directory; the macOS bundle helper already
+    // places the process inside Contents/Resources, where assets/ is copied.
+    Texture2D reactorConcreteTexture{};
+    Texture2D reactorDarkMetalTexture{};
+    Texture2D reactorPaintedMetalTexture{};
+    Texture2D reactorHazardTexture{};
+    Texture2D reactorCargoTexture{};
+    Texture2D reactorMachineryTexture{};
+    Texture2D reactorOilTexture{};
+
+    Model reactorFloorTileModel{};
+    Model reactorDarkMetalCubeModel{};
+    Model reactorPaintedMetalCubeModel{};
+    Model reactorCargoCubeModel{};
+    Model reactorMachineryCubeModel{};
+    Model reactorHazardCubeModel{};
+    Model reactorOilPlaneModel{};
+
+    // Dedicated cylindrical material models let the reactor itself use the
+    // same PNG material set as the rest of Reactor Yard.
+    Model reactorDarkMetalCylinderModel{};
+    Model reactorPaintedMetalCylinderModel{};
+    Model reactorHazardCylinderModel{};
+
+    bool reactorMaterialsLoaded = false;
+
+
+    // --------------------------------------------------------
+    // ALIEN OUTPOST MATERIALS
+    // --------------------------------------------------------
+    Texture2D alienGroundTexture{};
+    Texture2D alienRockTexture{};
+    Texture2D alienMetalTexture{};
+    Texture2D alienPanelTexture{};
+    Texture2D alienCrystalTexture{};
+    Texture2D alienOrganicTexture{};
+
+    Model alienGroundTileModel{};
+    Model alienMetalCubeModel{};
+    Model alienPanelCubeModel{};
+    Model alienRockSphereModel{};
+    Model alienCrystalSpikeModel{};
+    Model alienOrganicSphereModel{};
+    Model alienMetalCylinderModel{};
+
+    bool alienMaterialsLoaded = false;
+
 
     // 16 distinct player colors. Multiplayer Arena will make these
     // server-authoritative so two players can never reserve the same color.
@@ -221,9 +276,57 @@ namespace
         TEAM_3V3
     };
 
+    enum class ArenaMap
+    {
+        REACTOR_YARD,
+        ALIEN_OUTPOST
+    };
+
+    ArenaMap activeArenaMap =
+        ArenaMap::REACTOR_YARD;
+
+    const char* ArenaMapName(ArenaMap map)
+    {
+        switch (map)
+        {
+            case ArenaMap::REACTOR_YARD:
+                return "REACTOR YARD";
+
+            case ArenaMap::ALIEN_OUTPOST:
+                return "ALIEN OUTPOST";
+        }
+
+        return "REACTOR YARD";
+    }
+
+    float CurrentArenaHalf()
+    {
+        return
+            activeArenaMap == ArenaMap::ALIEN_OUTPOST
+            ? 30.0f
+            : ARENA_HALF;
+    }
+
+    float CurrentArenaWallCenter()
+    {
+        return
+            activeArenaMap == ArenaMap::ALIEN_OUTPOST
+            ? 31.0f
+            : ARENA_WALL_CENTER;
+    }
+
+    float CurrentArenaVisualSize()
+    {
+        return
+            activeArenaMap == ArenaMap::ALIEN_OUTPOST
+            ? 62.0f
+            : ARENA_VISUAL_SIZE;
+    }
+
     struct MatchSettings
     {
         ArenaMode mode = ArenaMode::SCORE_FFA;
+        ArenaMap map = ArenaMap::REACTOR_YARD;
         int playerCount = 4;
         int scoreLimit = DEFAULT_SCORE_LIMIT;
         float timeLimitSeconds = DEFAULT_TIME_LIMIT;
@@ -366,9 +469,61 @@ namespace
         return "SCORE_FFA";
     }
 
-    ArenaMode ArenaModeFromPacketName(
-        const std::string& mode)
+
+    const char* ArenaMapPacketName(ArenaMap map)
     {
+        return
+            map == ArenaMap::ALIEN_OUTPOST
+            ? "ALIEN_OUTPOST"
+            : "REACTOR_YARD";
+    }
+
+
+    std::string ArenaBaseModeToken(
+        const std::string& modeToken)
+    {
+        const std::size_t separator =
+            modeToken.find('@');
+
+        if (separator == std::string::npos)
+            return modeToken;
+
+        return modeToken.substr(
+            0,
+            separator
+        );
+    }
+
+
+    ArenaMap ArenaMapFromModeToken(
+        const std::string& modeToken)
+    {
+        const std::size_t separator =
+            modeToken.find('@');
+
+        if (separator == std::string::npos)
+            return ArenaMap::REACTOR_YARD;
+
+        const std::string mapToken =
+            modeToken.substr(
+                separator + 1
+            );
+
+        if (mapToken == "ALIEN_OUTPOST")
+            return ArenaMap::ALIEN_OUTPOST;
+
+        return ArenaMap::REACTOR_YARD;
+    }
+
+
+    ArenaMode ArenaModeFromPacketName(
+        const std::string& modeToken)
+    {
+        const std::string mode =
+            ArenaBaseModeToken(
+                modeToken
+            );
+
         if (mode == "TIME_FFA")
             return ArenaMode::TIME_FFA;
         if (mode == "DUEL")
@@ -563,24 +718,33 @@ namespace
         // Outer arena walls. These match the four cubes drawn
         // in DrawArena(). They are camera blockers even though
         // they are not part of the tank movement obstacle list.
+        const float wallCenter =
+            CurrentArenaWallCenter();
+
+        const float wallOuter =
+            wallCenter + 0.5f;
+
+        const float wallInner =
+            wallCenter - 0.5f;
+
         const BoundingBox northWall = {
-            {-20.5f, 0.0f, -20.5f},
-            { 20.5f, 4.5f, -19.5f}
+            {-wallOuter, 0.0f, -wallOuter},
+            { wallOuter, 4.5f, -wallInner}
         };
 
         const BoundingBox southWall = {
-            {-20.5f, 0.0f, 19.5f},
-            { 20.5f, 4.5f, 20.5f}
+            {-wallOuter, 0.0f, wallInner},
+            { wallOuter, 4.5f, wallOuter}
         };
 
         const BoundingBox westWall = {
-            {-20.5f, 0.0f, -19.5f},
-            {-19.5f, 4.5f,  19.5f}
+            {-wallOuter, 0.0f, -wallInner},
+            {-wallInner, 4.5f,  wallInner}
         };
 
         const BoundingBox eastWall = {
-            {19.5f, 0.0f, -19.5f},
-            {20.5f, 4.5f,  19.5f}
+            {wallInner, 0.0f, -wallInner},
+            {wallOuter, 4.5f,  wallInner}
         };
 
         TestCameraBox(northWall);
@@ -650,11 +814,14 @@ namespace
 
     bool PositionBlocked(Vector3 position, const std::vector<Obstacle>& obstacles)
     {
+        const float arenaHalf =
+            CurrentArenaHalf();
+
         if (
-            position.x < -ARENA_HALF + TANK_RADIUS ||
-            position.x > ARENA_HALF - TANK_RADIUS ||
-            position.z < -ARENA_HALF + TANK_RADIUS ||
-            position.z > ARENA_HALF - TANK_RADIUS)
+            position.x < -arenaHalf + TANK_RADIUS ||
+            position.x > arenaHalf - TANK_RADIUS ||
+            position.z < -arenaHalf + TANK_RADIUS ||
+            position.z > arenaHalf - TANK_RADIUS)
         {
             return true;
         }
@@ -670,34 +837,7 @@ namespace
         return false;
     }
 
-    void MoveCombatant(
-        Combatant& combatant,
-        Vector3 movement,
-        float dt,
-        float speed,
-        const std::vector<Obstacle>& obstacles)
-    {
-        if (!combatant.alive)
-            return;
-
-        movement = NormalizeXZ(movement);
-        if (LengthXZ(movement) <= 0.001f)
-            return;
-
-        combatant.bodyYaw = DirectionYaw(movement);
-
-        Vector3 next = combatant.position;
-        next.x += movement.x * speed * dt;
-        if (!PositionBlocked(next, obstacles))
-            combatant.position.x = next.x;
-
-        next = combatant.position;
-        next.z += movement.z * speed * dt;
-        if (!PositionBlocked(next, obstacles))
-            combatant.position.z = next.z;
-    }
-
-    bool OnlinePositionBlockedByTank(
+    bool PositionBlockedByTank(
         Vector3 position,
         int selfIndex,
         const std::vector<Combatant>& combatants)
@@ -740,6 +880,78 @@ namespace
         return false;
     }
 
+
+    void MoveCombatant(
+        Combatant& combatant,
+        int selfIndex,
+        Vector3 movement,
+        float dt,
+        float speed,
+        const std::vector<Obstacle>& obstacles,
+        const std::vector<Combatant>& combatants)
+    {
+        if (!combatant.alive)
+            return;
+
+        movement = NormalizeXZ(movement);
+        if (LengthXZ(movement) <= 0.001f)
+            return;
+
+        combatant.bodyYaw =
+            DirectionYaw(movement);
+
+        // Resolve each axis independently. This preserves the existing
+        // "slide along walls" feel while also treating every living tank
+        // as a solid circular obstacle.
+        Vector3 next =
+            combatant.position;
+
+        next.x +=
+            movement.x *
+            speed *
+            dt;
+
+        if (
+            !PositionBlocked(
+                next,
+                obstacles
+            ) &&
+            !PositionBlockedByTank(
+                next,
+                selfIndex,
+                combatants
+            )
+        )
+        {
+            combatant.position.x =
+                next.x;
+        }
+
+        next =
+            combatant.position;
+
+        next.z +=
+            movement.z *
+            speed *
+            dt;
+
+        if (
+            !PositionBlocked(
+                next,
+                obstacles
+            ) &&
+            !PositionBlockedByTank(
+                next,
+                selfIndex,
+                combatants
+            )
+        )
+        {
+            combatant.position.z =
+                next.z;
+        }
+    }
+
     void MoveOnlineCombatant(
         Combatant& combatant,
         int selfIndex,
@@ -765,7 +977,7 @@ namespace
 
         if (
             !PositionBlocked(next, obstacles) &&
-            !OnlinePositionBlockedByTank(
+            !PositionBlockedByTank(
                 next,
                 selfIndex,
                 combatants
@@ -780,7 +992,7 @@ namespace
 
         if (
             !PositionBlocked(next, obstacles) &&
-            !OnlinePositionBlockedByTank(
+            !PositionBlockedByTank(
                 next,
                 selfIndex,
                 combatants
@@ -846,14 +1058,28 @@ namespace
     {
         combatants.clear();
 
-        const Vector3 spawns[6] = {
-            {-14.0f, 0.0f,  14.0f},
-            {-14.0f, 0.0f, -14.0f},
-            {  0.0f, 0.0f,  15.0f},
-            { 14.0f, 0.0f, -14.0f},
-            { 14.0f, 0.0f,  14.0f},
-            {  0.0f, 0.0f, -15.0f}
+        const Vector3 reactorSpawns[6] = {
+            {-21.0f, 0.0f,  21.0f},
+            {-21.0f, 0.0f, -21.0f},
+            {  0.0f, 0.0f,  22.0f},
+            { 21.0f, 0.0f, -21.0f},
+            { 21.0f, 0.0f,  21.0f},
+            {  0.0f, 0.0f, -22.0f}
         };
+
+        const Vector3 alienSpawns[6] = {
+            {-26.0f, 0.0f,  26.0f},
+            {-26.0f, 0.0f, -26.0f},
+            {  0.0f, 0.0f,  27.0f},
+            { 26.0f, 0.0f, -26.0f},
+            { 26.0f, 0.0f,  26.0f},
+            {  0.0f, 0.0f, -27.0f}
+        };
+
+        const Vector3* spawns =
+            settings.map == ArenaMap::ALIEN_OUTPOST
+            ? alienSpawns
+            : reactorSpawns;
 
         const char* botNames[5] = {
             "BOT ALPHA",
@@ -1213,7 +1439,15 @@ namespace
                 };
             }
 
-            MoveCombatant(bot, movement, dt, BOT_SPEED, obstacles);
+            MoveCombatant(
+                bot,
+                i,
+                movement,
+                dt,
+                BOT_SPEED,
+                obstacles,
+                combatants
+            );
 
             bot.fireTimer -= dt;
             if (bot.fireTimer <= 0.0f && distance < 16.0f)
@@ -1324,94 +1558,2682 @@ namespace
         }
     }
 
-    void DrawArena(const std::vector<Obstacle>& obstacles)
+
+    void ApplyModelTexture(
+        Model& model,
+        Texture2D texture)
     {
-        DrawPlane({0.0f, 0.0f, 0.0f}, {40.0f, 40.0f}, FLOOR_COLOR);
-
-        DrawCube(
-            {0.0f, 2.25f, -20.0f},
-            40.0f,
-            4.5f,
-            1.0f,
-            WALL_COLOR
-            );
-
-        DrawCube(   
-            {0.0f, 2.25f, 20.0f},
-            40.0f,
-            4.5f,
-            1.0f,
-            WALL_COLOR
-        );
-
-        DrawCube(
-            {-20.0f, 2.25f, 0.0f},
-            1.0f,
-            4.5f,
-            40.0f,
-            WALL_COLOR
-        );
-
-        DrawCube(
-            {20.0f, 2.25f, 0.0f},
-            1.0f,
-            4.5f,
-            40.0f,
-            WALL_COLOR
-        );
-
-        for (const Obstacle& obstacle : obstacles)
+        if (
+            model.materialCount <= 0 ||
+            texture.id == 0
+        )
         {
-            DrawCubeV(BoxCenter(obstacle.box), BoxSize(obstacle.box), OBSTACLE_COLOR);
-            DrawCubeWiresV(
-                BoxCenter(obstacle.box),
-                BoxSize(obstacle.box),
-                Color{125, 130, 145, 255});
+            return;
         }
 
-        DrawGrid(40, 1.0f);
+        model.materials[0]
+            .maps[MATERIAL_MAP_DIFFUSE]
+            .texture = texture;
     }
 
-    void DrawTank(const Combatant& c, Model& bodyModel, Model& turretModel)
+
+    void LoadReactorYardMaterials()
+    {
+        if (reactorMaterialsLoaded)
+            return;
+
+        const char* base =
+            "assets/arena/reactor_yard/";
+
+        reactorConcreteTexture =
+            LoadTexture(
+                TextFormat(
+                    "%sconcrete_floor.png",
+                    base
+                )
+            );
+
+        reactorDarkMetalTexture =
+            LoadTexture(
+                TextFormat(
+                    "%sdark_metal.png",
+                    base
+                )
+            );
+
+        reactorPaintedMetalTexture =
+            LoadTexture(
+                TextFormat(
+                    "%spainted_metal.png",
+                    base
+                )
+            );
+
+        reactorHazardTexture =
+            LoadTexture(
+                TextFormat(
+                    "%shazard_stripes.png",
+                    base
+                )
+            );
+
+        reactorCargoTexture =
+            LoadTexture(
+                TextFormat(
+                    "%scargo_container.png",
+                    base
+                )
+            );
+
+        reactorMachineryTexture =
+            LoadTexture(
+                TextFormat(
+                    "%smachinery_panel.png",
+                    base
+                )
+            );
+
+        reactorOilTexture =
+            LoadTexture(
+                TextFormat(
+                    "%soil_stain.png",
+                    base
+                )
+            );
+
+        Texture2D* textures[] = {
+            &reactorConcreteTexture,
+            &reactorDarkMetalTexture,
+            &reactorPaintedMetalTexture,
+            &reactorHazardTexture,
+            &reactorCargoTexture,
+            &reactorMachineryTexture,
+            &reactorOilTexture
+        };
+
+        for (Texture2D* texture : textures)
+        {
+            if (texture->id == 0)
+                continue;
+
+            SetTextureFilter(
+                *texture,
+                TEXTURE_FILTER_BILINEAR
+            );
+
+            SetTextureWrap(
+                *texture,
+                TEXTURE_WRAP_REPEAT
+            );
+        }
+
+        // Small repeated floor tiles prevent one giant photograph from
+        // stretching across the entire arena.
+        reactorFloorTileModel =
+            LoadModelFromMesh(
+                GenMeshPlane(
+                    4.0f,
+                    4.0f,
+                    1,
+                    1
+                )
+            );
+
+        reactorDarkMetalCubeModel =
+            LoadModelFromMesh(
+                GenMeshCube(
+                    1.0f,
+                    1.0f,
+                    1.0f
+                )
+            );
+
+        reactorPaintedMetalCubeModel =
+            LoadModelFromMesh(
+                GenMeshCube(
+                    1.0f,
+                    1.0f,
+                    1.0f
+                )
+            );
+
+        reactorCargoCubeModel =
+            LoadModelFromMesh(
+                GenMeshCube(
+                    1.0f,
+                    1.0f,
+                    1.0f
+                )
+            );
+
+        reactorMachineryCubeModel =
+            LoadModelFromMesh(
+                GenMeshCube(
+                    1.0f,
+                    1.0f,
+                    1.0f
+                )
+            );
+
+        reactorHazardCubeModel =
+            LoadModelFromMesh(
+                GenMeshCube(
+                    1.0f,
+                    1.0f,
+                    1.0f
+                )
+            );
+
+        reactorOilPlaneModel =
+            LoadModelFromMesh(
+                GenMeshPlane(
+                    1.0f,
+                    1.0f,
+                    1,
+                    1
+                )
+            );
+
+        // Unit-radius / unit-height cylinder meshes used only for Reactor
+        // Yard rendering. Scaling them at draw time gives us a textured
+        // cylindrical shell without touching collision or gameplay.
+        reactorDarkMetalCylinderModel =
+            LoadModelFromMesh(
+                GenMeshCylinder(
+                    1.0f,
+                    1.0f,
+                    32
+                )
+            );
+
+        reactorPaintedMetalCylinderModel =
+            LoadModelFromMesh(
+                GenMeshCylinder(
+                    1.0f,
+                    1.0f,
+                    32
+                )
+            );
+
+        reactorHazardCylinderModel =
+            LoadModelFromMesh(
+                GenMeshCylinder(
+                    1.0f,
+                    1.0f,
+                    32
+                )
+            );
+
+        ApplyModelTexture(
+            reactorFloorTileModel,
+            reactorConcreteTexture
+        );
+
+        ApplyModelTexture(
+            reactorDarkMetalCubeModel,
+            reactorDarkMetalTexture
+        );
+
+        ApplyModelTexture(
+            reactorPaintedMetalCubeModel,
+            reactorPaintedMetalTexture
+        );
+
+        ApplyModelTexture(
+            reactorCargoCubeModel,
+            reactorCargoTexture
+        );
+
+        ApplyModelTexture(
+            reactorMachineryCubeModel,
+            reactorMachineryTexture
+        );
+
+        ApplyModelTexture(
+            reactorHazardCubeModel,
+            reactorHazardTexture
+        );
+
+        ApplyModelTexture(
+            reactorOilPlaneModel,
+            reactorOilTexture
+        );
+
+        ApplyModelTexture(
+            reactorDarkMetalCylinderModel,
+            reactorDarkMetalTexture
+        );
+
+        ApplyModelTexture(
+            reactorPaintedMetalCylinderModel,
+            reactorPaintedMetalTexture
+        );
+
+        ApplyModelTexture(
+            reactorHazardCylinderModel,
+            reactorHazardTexture
+        );
+
+        const bool coreTexturesReady =
+            reactorConcreteTexture.id != 0 &&
+            reactorDarkMetalTexture.id != 0 &&
+            reactorPaintedMetalTexture.id != 0 &&
+            reactorHazardTexture.id != 0 &&
+            reactorCargoTexture.id != 0 &&
+            reactorMachineryTexture.id != 0 &&
+            reactorOilTexture.id != 0;
+
+        if (!coreTexturesReady)
+        {
+            TraceLog(
+                LOG_WARNING,
+                "JENG ARENA: one or more Reactor Yard textures failed to load"
+            );
+        }
+
+        reactorMaterialsLoaded = coreTexturesReady;
+    }
+
+
+    void UnloadReactorYardMaterials()
+    {
+        if (!reactorMaterialsLoaded)
+            return;
+
+        UnloadModel(reactorFloorTileModel);
+        UnloadModel(reactorDarkMetalCubeModel);
+        UnloadModel(reactorPaintedMetalCubeModel);
+        UnloadModel(reactorCargoCubeModel);
+        UnloadModel(reactorMachineryCubeModel);
+        UnloadModel(reactorHazardCubeModel);
+        UnloadModel(reactorOilPlaneModel);
+        UnloadModel(reactorDarkMetalCylinderModel);
+        UnloadModel(reactorPaintedMetalCylinderModel);
+        UnloadModel(reactorHazardCylinderModel);
+
+        UnloadTexture(reactorConcreteTexture);
+        UnloadTexture(reactorDarkMetalTexture);
+        UnloadTexture(reactorPaintedMetalTexture);
+        UnloadTexture(reactorHazardTexture);
+        UnloadTexture(reactorCargoTexture);
+        UnloadTexture(reactorMachineryTexture);
+        UnloadTexture(reactorOilTexture);
+
+        reactorMaterialsLoaded = false;
+    }
+
+
+
+    void LoadAlienOutpostMaterials()
+    {
+        if (alienMaterialsLoaded)
+            return;
+
+        const char* base =
+            "assets/arena/alien_outpost/";
+
+        alienGroundTexture =
+            LoadTexture(
+                TextFormat(
+                    "%salien_ground.png",
+                    base
+                )
+            );
+
+        alienRockTexture =
+            LoadTexture(
+                TextFormat(
+                    "%salien_rock.png",
+                    base
+                )
+            );
+
+        alienMetalTexture =
+            LoadTexture(
+                TextFormat(
+                    "%salien_metal.png",
+                    base
+                )
+            );
+
+        alienPanelTexture =
+            LoadTexture(
+                TextFormat(
+                    "%salien_panel.png",
+                    base
+                )
+            );
+
+        alienCrystalTexture =
+            LoadTexture(
+                TextFormat(
+                    "%salien_crystal.png",
+                    base
+                )
+            );
+
+        alienOrganicTexture =
+            LoadTexture(
+                TextFormat(
+                    "%salien_organic.png",
+                    base
+                )
+            );
+
+        Texture2D* textures[] = {
+            &alienGroundTexture,
+            &alienRockTexture,
+            &alienMetalTexture,
+            &alienPanelTexture,
+            &alienCrystalTexture,
+            &alienOrganicTexture
+        };
+
+        for (Texture2D* texture : textures)
+        {
+            if (texture->id == 0)
+                continue;
+
+            SetTextureFilter(
+                *texture,
+                TEXTURE_FILTER_BILINEAR
+            );
+
+            SetTextureWrap(
+                *texture,
+                TEXTURE_WRAP_REPEAT
+            );
+        }
+
+        alienGroundTileModel =
+            LoadModelFromMesh(
+                GenMeshPlane(
+                    6.0f,
+                    6.0f,
+                    1,
+                    1
+                )
+            );
+
+        alienMetalCubeModel =
+            LoadModelFromMesh(
+                GenMeshCube(
+                    1.0f,
+                    1.0f,
+                    1.0f
+                )
+            );
+
+        alienPanelCubeModel =
+            LoadModelFromMesh(
+                GenMeshCube(
+                    1.0f,
+                    1.0f,
+                    1.0f
+                )
+            );
+
+        alienRockSphereModel =
+            LoadModelFromMesh(
+                GenMeshSphere(
+                    1.0f,
+                    16,
+                    16
+                )
+            );
+
+        alienCrystalSpikeModel =
+            LoadModelFromMesh(
+                GenMeshCone(
+                    1.0f,
+                    1.0f,
+                    6
+                )
+            );
+
+        alienOrganicSphereModel =
+            LoadModelFromMesh(
+                GenMeshSphere(
+                    1.0f,
+                    14,
+                    14
+                )
+            );
+
+        alienMetalCylinderModel =
+            LoadModelFromMesh(
+                GenMeshCylinder(
+                    1.0f,
+                    1.0f,
+                    24
+                )
+            );
+
+        ApplyModelTexture(
+            alienGroundTileModel,
+            alienGroundTexture
+        );
+
+        ApplyModelTexture(
+            alienMetalCubeModel,
+            alienMetalTexture
+        );
+
+        ApplyModelTexture(
+            alienPanelCubeModel,
+            alienPanelTexture
+        );
+
+        ApplyModelTexture(
+            alienRockSphereModel,
+            alienRockTexture
+        );
+
+        ApplyModelTexture(
+            alienCrystalSpikeModel,
+            alienCrystalTexture
+        );
+
+        ApplyModelTexture(
+            alienOrganicSphereModel,
+            alienOrganicTexture
+        );
+
+        ApplyModelTexture(
+            alienMetalCylinderModel,
+            alienMetalTexture
+        );
+
+        alienMaterialsLoaded =
+            alienGroundTexture.id != 0 &&
+            alienRockTexture.id != 0 &&
+            alienMetalTexture.id != 0 &&
+            alienPanelTexture.id != 0 &&
+            alienCrystalTexture.id != 0 &&
+            alienOrganicTexture.id != 0;
+
+        if (!alienMaterialsLoaded)
+        {
+            TraceLog(
+                LOG_WARNING,
+                "JENG ARENA: one or more Alien Outpost textures failed to load"
+            );
+        }
+    }
+
+
+    void UnloadAlienOutpostMaterials()
+    {
+        if (!alienMaterialsLoaded)
+            return;
+
+        UnloadModel(alienGroundTileModel);
+        UnloadModel(alienMetalCubeModel);
+        UnloadModel(alienPanelCubeModel);
+        UnloadModel(alienRockSphereModel);
+        UnloadModel(alienCrystalSpikeModel);
+        UnloadModel(alienOrganicSphereModel);
+        UnloadModel(alienMetalCylinderModel);
+
+        UnloadTexture(alienGroundTexture);
+        UnloadTexture(alienRockTexture);
+        UnloadTexture(alienMetalTexture);
+        UnloadTexture(alienPanelTexture);
+        UnloadTexture(alienCrystalTexture);
+        UnloadTexture(alienOrganicTexture);
+
+        alienMaterialsLoaded = false;
+    }
+
+
+    void DrawReactorFloor()
+    {
+        if (!reactorMaterialsLoaded)
+        {
+            DrawPlane(
+                {0.0f, 0.0f, 0.0f},
+                {
+                    ARENA_VISUAL_SIZE,
+                    ARENA_VISUAL_SIZE
+                },
+                FLOOR_COLOR
+            );
+            return;
+        }
+
+        // 13 x 13 four-meter slabs fill the 52 x 52 visual floor.
+        for (int z = -6; z <= 6; z++)
+        {
+            for (int x = -6; x <= 6; x++)
+            {
+                // Tiny tint variation avoids a perfectly repeated computer-grid
+                // feel while preserving the source texture.
+                int variation =
+                    ((x * 17 + z * 31) & 3) * 4;
+
+                Color tint = {
+                    (unsigned char)(228 - variation),
+                    (unsigned char)(228 - variation),
+                    (unsigned char)(228 - variation),
+                    255
+                };
+
+                DrawModel(
+                    reactorFloorTileModel,
+                    {
+                        x * 4.0f,
+                        -0.012f,
+                        z * 4.0f
+                    },
+                    1.0f,
+                    tint
+                );
+            }
+        }
+    }
+
+
+    void DrawOilStains()
+    {
+        if (!reactorMaterialsLoaded)
+            return;
+
+        struct OilDecal
+        {
+            Vector3 position;
+            float size;
+            float rotation;
+            unsigned char alpha;
+        };
+
+        const OilDecal decals[] = {
+            {{-10.2f, 0.012f,  5.5f}, 3.1f,  18.0f, 105},
+            {{ 11.8f, 0.012f, -7.0f}, 2.5f, -25.0f,  90},
+            {{ -6.0f, 0.012f,-18.2f}, 2.0f,  72.0f,  82},
+            {{ 17.4f, 0.012f,  8.8f}, 2.7f, 133.0f,  96},
+            {{ -2.0f, 0.012f, 12.7f}, 1.8f, 205.0f,  75}
+        };
+
+        for (const OilDecal& decal : decals)
+        {
+            DrawModelEx(
+                reactorOilPlaneModel,
+                decal.position,
+                {0.0f, 1.0f, 0.0f},
+                decal.rotation,
+                {
+                    decal.size,
+                    1.0f,
+                    decal.size
+                },
+                Color{255, 255, 255, decal.alpha}
+            );
+        }
+    }
+
+
+    void DrawTexturedBox(
+        Model& model,
+        Vector3 center,
+        Vector3 size,
+        Color tint = WHITE)
+    {
+        if (!reactorMaterialsLoaded)
+        {
+            DrawCubeV(
+                center,
+                size,
+                tint
+            );
+            return;
+        }
+
+        DrawModelEx(
+            model,
+            center,
+            {0.0f, 1.0f, 0.0f},
+            0.0f,
+            size,
+            tint
+        );
+    }
+
+
+    void DrawTexturedCylinder(
+        Model& model,
+        Vector3 center,
+        float radius,
+        float height,
+        Color tint = WHITE)
+    {
+        if (!reactorMaterialsLoaded)
+        {
+            DrawCylinder(
+                center,
+                radius,
+                radius,
+                height,
+                32,
+                tint
+            );
+            return;
+        }
+
+        DrawModelEx(
+            model,
+            center,
+            {0.0f, 1.0f, 0.0f},
+            0.0f,
+            {radius, height, radius},
+            tint
+        );
+    }
+
+
+
+    void DrawTexturedBoxRotated(
+        Model& model,
+        Vector3 center,
+        Vector3 size,
+        float yawDegrees,
+        Color tint = WHITE)
+    {
+        // Shared by both Reactor Yard and Alien Outpost tank materials.
+        if (
+            model.meshCount <= 0 ||
+            model.materialCount <= 0
+        )
+        {
+            return;
+        }
+
+        DrawModelEx(
+            model,
+            center,
+            {0.0f, 1.0f, 0.0f},
+            yawDegrees,
+            size,
+            tint
+        );
+    }
+
+
+    void DrawBlastBarrier(
+        Vector3 center,
+        Vector3 size)
+    {
+        DrawTexturedBox(
+            reactorDarkMetalCubeModel,
+            center,
+            size,
+            Color{210, 214, 220, 255}
+        );
+
+        // Concrete/steel feet make the cover read like a deliberately placed
+        // blast wall rather than a floating cuboid.
+        float footWidth =
+            std::max(0.45f, size.x * 0.18f);
+
+        DrawTexturedBox(
+            reactorDarkMetalCubeModel,
+            {
+                center.x -
+                    size.x * 0.34f,
+                0.23f,
+                center.z
+            },
+            {
+                footWidth,
+                0.46f,
+                size.z + 0.55f
+            },
+            Color{155, 160, 170, 255}
+        );
+
+        DrawTexturedBox(
+            reactorDarkMetalCubeModel,
+            {
+                center.x +
+                    size.x * 0.34f,
+                0.23f,
+                center.z
+            },
+            {
+                footWidth,
+                0.46f,
+                size.z + 0.55f
+            },
+            Color{155, 160, 170, 255}
+        );
+
+        // Real hazard texture band along the lower face.
+        DrawTexturedBox(
+            reactorHazardCubeModel,
+            {
+                center.x,
+                0.34f,
+                center.z -
+                    size.z * 0.5f -
+                    0.035f
+            },
+            {
+                size.x * 0.92f,
+                0.44f,
+                0.07f
+            }
+        );
+    }
+
+
+    void DrawCargoCover(
+        Vector3 center,
+        Vector3 size)
+    {
+        DrawTexturedBox(
+            reactorCargoCubeModel,
+            center,
+            size,
+            WHITE
+        );
+
+        // Dark corner rails break up the single box silhouette.
+        const float rail = 0.13f;
+
+        for (int sx : {-1, 1})
+        {
+            for (int sz : {-1, 1})
+            {
+                DrawTexturedBox(
+                    reactorDarkMetalCubeModel,
+                    {
+                        center.x +
+                            sx *
+                            (size.x * 0.5f - rail),
+                        center.y,
+                        center.z +
+                            sz *
+                            (size.z * 0.5f - rail)
+                    },
+                    {
+                        rail * 2.0f,
+                        size.y + 0.08f,
+                        rail * 2.0f
+                    },
+                    Color{110, 112, 116, 255}
+                );
+            }
+        }
+    }
+
+
+    void DrawGeneratorCover(
+        Vector3 center,
+        Vector3 size)
+    {
+        DrawTexturedBox(
+            reactorPaintedMetalCubeModel,
+            center,
+            size,
+            Color{205, 208, 210, 255}
+        );
+
+        // Machinery panel on the outward/front face.
+        DrawTexturedBox(
+            reactorMachineryCubeModel,
+            {
+                center.x,
+                center.y,
+                center.z -
+                    size.z * 0.5f -
+                    0.035f
+            },
+            {
+                size.x * 0.76f,
+                size.y * 0.62f,
+                0.07f
+            }
+        );
+
+        // Upper dark cap and warning rail.
+        DrawTexturedBox(
+            reactorDarkMetalCubeModel,
+            {
+                center.x,
+                center.y +
+                    size.y * 0.5f + 0.10f,
+                center.z
+            },
+            {
+                size.x + 0.18f,
+                0.20f,
+                size.z + 0.18f
+            },
+            Color{160, 164, 172, 255}
+        );
+
+        DrawTexturedBox(
+            reactorHazardCubeModel,
+            {
+                center.x,
+                0.25f,
+                center.z -
+                    size.z * 0.5f -
+                    0.045f
+            },
+            {
+                size.x * 0.88f,
+                0.34f,
+                0.09f
+            }
+        );
+    }
+
+
+    void DrawFloorMarkings()
+    {
+        const Color laneYellow =
+            Color{214, 174, 50, 210};
+
+        const Color dangerRed =
+            Color{180, 48, 48, 220};
+
+        const Color grateColor =
+            Color{48, 52, 62, 255};
+
+        // Four broad approach lanes aimed at the reactor.
+        for (int i = -4; i <= 4; i++)
+        {
+            if (i == 0)
+                continue;
+
+            float offset =
+                (float)i * 4.0f;
+
+            DrawCube(
+                {offset, 0.018f, 0.0f},
+                1.7f,
+                0.035f,
+                0.11f,
+                laneYellow
+            );
+
+            DrawCube(
+                {0.0f, 0.018f, offset},
+                0.11f,
+                0.035f,
+                1.7f,
+                laneYellow
+            );
+        }
+
+        // Perimeter warning strips make the playable boundary readable.
+        DrawCube(
+            {0.0f, 0.022f, -24.35f},
+            48.0f, 0.04f, 0.16f,
+            dangerRed
+        );
+
+        DrawCube(
+            {0.0f, 0.022f, 24.35f},
+            48.0f, 0.04f, 0.16f,
+            dangerRed
+        );
+
+        DrawCube(
+            {-24.35f, 0.022f, 0.0f},
+            0.16f, 0.04f, 48.0f,
+            dangerRed
+        );
+
+        DrawCube(
+            {24.35f, 0.022f, 0.0f},
+            0.16f, 0.04f, 48.0f,
+            dangerRed
+        );
+
+        // Small maintenance grates around the central structure.
+        const Vector3 grateCenters[4] = {
+            {-7.3f, 0.025f, -7.3f},
+            { 7.3f, 0.025f, -7.3f},
+            {-7.3f, 0.025f,  7.3f},
+            { 7.3f, 0.025f,  7.3f}
+        };
+
+        for (const Vector3& center : grateCenters)
+        {
+            DrawCube(
+                center,
+                2.2f,
+                0.045f,
+                2.2f,
+                grateColor
+            );
+
+            for (int bar = -2; bar <= 2; bar++)
+            {
+                DrawCube(
+                    {
+                        center.x +
+                            bar * 0.38f,
+                        0.052f,
+                        center.z
+                    },
+                    0.07f,
+                    0.025f,
+                    1.85f,
+                    Color{86, 91, 103, 255}
+                );
+            }
+        }
+    }
+
+
+    void DrawHazardBands(
+        Vector3 center,
+        Vector3 size)
+    {
+        const Color hazard =
+            Color{230, 188, 45, 255};
+
+        // Short alternating yellow bands around the base of cover pieces.
+        for (int i = -2; i <= 2; i++)
+        {
+            float x =
+                center.x +
+                i * size.x * 0.18f;
+
+            DrawCube(
+                {
+                    x,
+                    0.10f,
+                    center.z -
+                        size.z * 0.5f -
+                        0.035f
+                },
+                size.x * 0.10f,
+                0.16f,
+                0.07f,
+                hazard
+            );
+        }
+    }
+
+
+    void DrawReactorCore()
+    {
+        float time =
+            (float)GetTime();
+
+        float pulse =
+            0.5f +
+            0.5f *
+            std::sin(time * 3.2f);
+
+        Color glow =
+            Color{
+                235,
+                (unsigned char)(75 + pulse * 80.0f),
+                55,
+                255
+            };
+
+        // --------------------------------------------------------
+        // REACTOR FOUNDATION
+        // --------------------------------------------------------
+        // Existing collision remains a single 9x9-ish center obstacle. The
+        // additional pieces below are visual-only and stay inside that shape.
+        DrawTexturedBox(
+            reactorDarkMetalCubeModel,
+            {0.0f, 0.45f, 0.0f},
+            {8.6f, 0.9f, 8.6f},
+            Color{185, 190, 198, 255}
+        );
+
+        // Painted-metal raised deck gives the foundation a second material
+        // instead of one uninterrupted dark block.
+        DrawTexturedBox(
+            reactorPaintedMetalCubeModel,
+            {0.0f, 0.94f, 0.0f},
+            {6.8f, 0.16f, 6.8f},
+            Color{178, 184, 190, 255}
+        );
+
+        // Four hazard-textured warning plates on the platform faces.
+        const Vector3 hazardPanels[4] = {
+            { 0.0f, 0.44f, -4.335f},
+            { 0.0f, 0.44f,  4.335f},
+            {-4.335f, 0.44f,  0.0f},
+            { 4.335f, 0.44f,  0.0f}
+        };
+
+        DrawTexturedBox(
+            reactorHazardCubeModel,
+            hazardPanels[0],
+            {4.7f, 0.42f, 0.07f}
+        );
+
+        DrawTexturedBox(
+            reactorHazardCubeModel,
+            hazardPanels[1],
+            {4.7f, 0.42f, 0.07f}
+        );
+
+        DrawTexturedBox(
+            reactorHazardCubeModel,
+            hazardPanels[2],
+            {0.07f, 0.42f, 4.7f}
+        );
+
+        DrawTexturedBox(
+            reactorHazardCubeModel,
+            hazardPanels[3],
+            {0.07f, 0.42f, 4.7f}
+        );
+
+        DrawCubeWires(
+            {0.0f, 0.45f, 0.0f},
+            8.6f,
+            0.9f,
+            8.6f,
+            Color{115, 120, 135, 255}
+        );
+
+        // --------------------------------------------------------
+        // SUPPORT PYLONS + CONTROL HARDWARE
+        // --------------------------------------------------------
+        const Vector3 pylons[4] = {
+            {-3.25f, 1.75f, -3.25f},
+            { 3.25f, 1.75f, -3.25f},
+            {-3.25f, 1.75f,  3.25f},
+            { 3.25f, 1.75f,  3.25f}
+        };
+
+        for (int i = 0; i < 4; i++)
+        {
+            DrawTexturedBox(
+                reactorPaintedMetalCubeModel,
+                pylons[i],
+                {0.85f, 2.8f, 0.85f},
+                Color{185, 190, 196, 255}
+            );
+
+            // Dark cap and lower foot visually split each support.
+            DrawTexturedBox(
+                reactorDarkMetalCubeModel,
+                {
+                    pylons[i].x,
+                    0.48f,
+                    pylons[i].z
+                },
+                {1.08f, 0.32f, 1.08f},
+                Color{180, 184, 190, 255}
+            );
+
+            DrawTexturedBox(
+                reactorDarkMetalCubeModel,
+                {
+                    pylons[i].x,
+                    3.02f,
+                    pylons[i].z
+                },
+                {1.02f, 0.22f, 1.02f},
+                Color{180, 184, 190, 255}
+            );
+
+            DrawSphere(
+                {
+                    pylons[i].x,
+                    3.22f,
+                    pylons[i].z
+                },
+                0.16f + pulse * 0.035f,
+                i % 2 == 0
+                    ? JENG_RED
+                    : JENG_YELLOW
+            );
+        }
+
+        // Small machinery/control boxes on each side of the reactor. They use
+        // the same machinery-panel PNG as the generator cover elsewhere.
+        const Vector3 controlBoxes[4] = {
+            { 0.0f, 1.28f, -2.05f},
+            { 0.0f, 1.28f,  2.05f},
+            {-2.05f, 1.28f,  0.0f},
+            { 2.05f, 1.28f,  0.0f}
+        };
+
+        for (int i = 0; i < 4; i++)
+        {
+            Vector3 size =
+                (i < 2)
+                ? Vector3{1.35f, 0.82f, 0.34f}
+                : Vector3{0.34f, 0.82f, 1.35f};
+
+            DrawTexturedBox(
+                reactorMachineryCubeModel,
+                controlBoxes[i],
+                size,
+                Color{225, 225, 225, 255}
+            );
+        }
+
+        // --------------------------------------------------------
+        // TEXTURED CENTRAL REACTOR DRUM
+        // --------------------------------------------------------
+        // Main shell: dark industrial metal PNG.
+        DrawTexturedCylinder(
+            reactorDarkMetalCylinderModel,
+            {0.0f, 1.00f, 0.0f},
+            1.45f,
+            3.20f,
+            Color{190, 194, 202, 255}
+        );
+
+        // Painted-metal lower and upper collars break the large cylinder into
+        // believable manufactured sections.
+        DrawTexturedCylinder(
+            reactorPaintedMetalCylinderModel,
+            {0.0f, 0.68f, 0.0f},
+            1.62f,
+            0.30f,
+            Color{190, 194, 198, 255}
+        );
+
+        DrawTexturedCylinder(
+            reactorPaintedMetalCylinderModel,
+            {0.0f, 2.36f, 0.0f},
+            1.56f,
+            0.24f,
+            Color{182, 188, 194, 255}
+        );
+
+        // Real hazard PNG wrapped around the lower shell.
+        DrawTexturedCylinder(
+            reactorHazardCylinderModel,
+            {0.0f, 0.90f, 0.0f},
+            1.53f,
+            0.22f,
+            WHITE
+        );
+
+        // Dark top cap.
+        DrawTexturedCylinder(
+            reactorDarkMetalCylinderModel,
+            {0.0f, 2.58f, 0.0f},
+            1.30f,
+            0.18f,
+            Color{165, 170, 180, 255}
+        );
+
+        // Eight vertical textured ribs make the central drum less smooth/plain.
+        for (int i = 0; i < 8; i++)
+        {
+            float angle =
+                i * 0.78539816339f;
+
+            Vector3 ribPosition = {
+                std::cos(angle) * 1.43f,
+                1.55f,
+                std::sin(angle) * 1.43f
+            };
+
+            // Thin metal columns are visual detail only.
+            DrawTexturedBox(
+                reactorPaintedMetalCubeModel,
+                ribPosition,
+                {0.12f, 2.25f, 0.12f},
+                Color{175, 180, 188, 255}
+            );
+        }
+
+        // Wireframe edge remains subtle and helps the silhouette against dark
+        // backgrounds without replacing the actual material.
+        DrawCylinderWires(
+            {0.0f, 1.0f, 0.0f},
+            1.47f,
+            1.17f,
+            3.2f,
+            24,
+            Color{120, 125, 138, 170}
+        );
+
+        // --------------------------------------------------------
+        // ENERGY CORE
+        // --------------------------------------------------------
+        // Keep the inner column emissive-looking instead of texturing it. This
+        // contrast makes it read as energy inside a physical metal machine.
+        DrawCylinder(
+            {0.0f, 1.15f, 0.0f},
+            0.58f + pulse * 0.07f,
+            0.58f + pulse * 0.07f,
+            2.85f,
+            20,
+            Color{
+                glow.r,
+                glow.g,
+                glow.b,
+                210
+            }
+        );
+
+        // Four small glowing bands around the core suggest containment coils.
+        for (int ring = 0; ring < 4; ring++)
+        {
+            float y =
+                0.45f +
+                ring * 0.55f;
+
+            DrawCylinderWires(
+                {0.0f, y, 0.0f},
+                0.78f,
+                0.78f,
+                0.06f,
+                20,
+                ring % 2 == 0
+                    ? JENG_RED
+                    : JENG_YELLOW
+            );
+        }
+
+        // Rotating-looking energy arms. They remain animation-only and do not
+        // affect networking or collision.
+        float armAngle =
+            time * 0.75f;
+
+        for (int i = 0; i < 4; i++)
+        {
+            float angle =
+                armAngle +
+                i * 1.57079632679f;
+
+            Vector3 end = {
+                std::cos(angle) * 2.6f,
+                3.15f,
+                std::sin(angle) * 2.6f
+            };
+
+            DrawLine3D(
+                {0.0f, 3.15f, 0.0f},
+                end,
+                i % 2 == 0
+                    ? JENG_RED
+                    : JENG_YELLOW
+            );
+
+            DrawSphere(
+                end,
+                0.12f,
+                glow
+            );
+        }
+    }
+
+
+    void DrawArenaAmbience()
+    {
+        float time =
+            (float)GetTime();
+
+        // Four animated warning beacons.
+        const Vector3 beaconPositions[4] = {
+            {-22.8f, 0.0f, -22.8f},
+            { 22.8f, 0.0f, -22.8f},
+            {-22.8f, 0.0f,  22.8f},
+            { 22.8f, 0.0f,  22.8f}
+        };
+
+        for (int i = 0; i < 4; i++)
+        {
+            bool bright =
+                std::sin(
+                    time * 5.5f +
+                    i * 1.4f
+                ) > 0.0f;
+
+            DrawCylinder(
+                {
+                    beaconPositions[i].x,
+                    0.0f,
+                    beaconPositions[i].z
+                },
+                0.38f,
+                0.38f,
+                1.25f,
+                12,
+                Color{62, 66, 76, 255}
+            );
+
+            DrawSphere(
+                {
+                    beaconPositions[i].x,
+                    1.42f,
+                    beaconPositions[i].z
+                },
+                bright
+                    ? 0.24f
+                    : 0.17f,
+                bright
+                    ? JENG_RED
+                    : Color{105, 35, 35, 255}
+            );
+        }
+
+        // Steam/heat vents provide subtle motion around the map.
+        const Vector3 vents[4] = {
+            {-8.0f, 0.0f, -8.0f},
+            { 8.0f, 0.0f, -8.0f},
+            {-8.0f, 0.0f,  8.0f},
+            { 8.0f, 0.0f,  8.0f}
+        };
+
+        for (int v = 0; v < 4; v++)
+        {
+            DrawCylinder(
+                vents[v],
+                0.42f,
+                0.42f,
+                0.10f,
+                12,
+                Color{52, 56, 65, 255}
+            );
+
+            for (int puff = 0; puff < 3; puff++)
+            {
+                float phase =
+                    std::fmod(
+                        time * 0.55f +
+                        puff * 0.33f +
+                        v * 0.17f,
+                        1.0f
+                    );
+
+                float height =
+                    0.30f +
+                    phase * 2.1f;
+
+                float radius =
+                    0.10f +
+                    phase * 0.22f;
+
+                unsigned char alpha =
+                    (unsigned char)(
+                        120.0f *
+                        (1.0f - phase)
+                    );
+
+                DrawSphere(
+                    {
+                        vents[v].x +
+                            std::sin(
+                                time * 1.2f +
+                                puff +
+                                v
+                            ) * 0.08f,
+                        height,
+                        vents[v].z
+                    },
+                    radius,
+                    Color{
+                        155,
+                        160,
+                        170,
+                        alpha
+                    }
+                );
+            }
+        }
+    }
+
+
+    void DrawReactorYard(
+        const std::vector<Obstacle>& obstacles)
+    {
+        DrawReactorFloor();
+        DrawOilStains();
+
+        // Perimeter walls now read as heavy industrial steel instead of flat
+        // gray primitives.  Collision dimensions are unchanged.
+        DrawTexturedBox(
+            reactorDarkMetalCubeModel,
+            {0.0f, 2.25f, -ARENA_WALL_CENTER},
+            {ARENA_VISUAL_SIZE, 4.5f, 1.0f},
+            Color{165, 170, 180, 255}
+        );
+
+        DrawTexturedBox(
+            reactorDarkMetalCubeModel,
+            {0.0f, 2.25f, ARENA_WALL_CENTER},
+            {ARENA_VISUAL_SIZE, 4.5f, 1.0f},
+            Color{165, 170, 180, 255}
+        );
+
+        DrawTexturedBox(
+            reactorDarkMetalCubeModel,
+            {-ARENA_WALL_CENTER, 2.25f, 0.0f},
+            {1.0f, 4.5f, ARENA_VISUAL_SIZE},
+            Color{165, 170, 180, 255}
+        );
+
+        DrawTexturedBox(
+            reactorDarkMetalCubeModel,
+            {ARENA_WALL_CENTER, 2.25f, 0.0f},
+            {1.0f, 4.5f, ARENA_VISUAL_SIZE},
+            Color{165, 170, 180, 255}
+        );
+
+        DrawFloorMarkings();
+
+        // The physical collision boxes are exactly the same as v4.1.  Only
+        // their visual identities change.
+        for (int i = 1; i < (int)obstacles.size(); i++)
+        {
+            const Obstacle& obstacle =
+                obstacles[i];
+
+            Vector3 center =
+                BoxCenter(obstacle.box);
+
+            Vector3 size =
+                BoxSize(obstacle.box);
+
+            if (i >= 1 && i <= 4)
+            {
+                // Major cardinal cover = reinforced blast barriers / generator
+                // housings. Alternate them so the yard feels constructed, not
+                // copied-and-pasted.
+                if (i % 2 == 1)
+                    DrawBlastBarrier(center, size);
+                else
+                    DrawGeneratorCover(center, size);
+            }
+            else
+            {
+                // Corner cover = old weathered cargo modules.
+                DrawCargoCover(center, size);
+            }
+        }
+
+        DrawReactorCore();
+        DrawArenaAmbience();
+
+        // Intentionally no DrawGrid().  The concrete slabs, stains, painted
+        // lanes, grates and decals now provide the ground detail.
+    }
+
+
+
+    void DrawAlienFloor()
+    {
+        if (!alienMaterialsLoaded)
+        {
+            DrawPlane(
+                {0.0f, 0.0f, 0.0f},
+                {
+                    CurrentArenaVisualSize(),
+                    CurrentArenaVisualSize()
+                },
+                Color{55, 37, 58, 255}
+            );
+            return;
+        }
+
+        // Rotate neighboring tiles so the photographic soil repeats less
+        // obviously than a perfectly aligned grid.
+        for (int z = -5; z <= 5; z++)
+        {
+            for (int x = -5; x <= 5; x++)
+            {
+                float rotation =
+                    (float)(((x + z * 3) & 3) * 90);
+
+                Color tint =
+                    ((x + z) & 1)
+                    ? Color{190, 185, 205, 255}
+                    : Color{210, 205, 220, 255};
+
+                DrawModelEx(
+                    alienGroundTileModel,
+                    {
+                        x * 6.0f,
+                        -0.015f,
+                        z * 6.0f
+                    },
+                    {0.0f, 1.0f, 0.0f},
+                    rotation,
+                    {1.0f, 1.0f, 1.0f},
+                    tint
+                );
+            }
+        }
+    }
+
+
+    void DrawAlienRockCluster(
+        Vector3 center,
+        Vector3 size,
+        int seed)
+    {
+        if (!alienMaterialsLoaded)
+        {
+            DrawCubeV(
+                center,
+                size,
+                Color{48, 55, 63, 255}
+            );
+            return;
+        }
+
+        for (int i = 0; i < 5; i++)
+        {
+            float angle =
+                (float)i * 1.2566370614f +
+                seed * 0.47f;
+
+            float ring =
+                i == 0
+                ? 0.0f
+                : size.x * 0.20f;
+
+            Vector3 position = {
+                center.x + std::cos(angle) * ring,
+                0.55f + (i % 3) * 0.24f,
+                center.z + std::sin(angle) * ring
+            };
+
+            Vector3 scale = {
+                size.x * (i == 0 ? 0.36f : 0.24f),
+                0.95f + (i % 2) * 0.55f,
+                size.z * (i == 0 ? 0.36f : 0.24f)
+            };
+
+            DrawModelEx(
+                alienRockSphereModel,
+                position,
+                {0.0f, 1.0f, 0.0f},
+                (float)(seed * 17 + i * 41),
+                scale,
+                Color{185, 200, 205, 255}
+            );
+        }
+
+        // Purple crystal spikes grow out of the rock field.
+        for (int i = 0; i < 4; i++)
+        {
+            float angle =
+                (float)i * 1.57079632679f +
+                seed * 0.29f;
+
+            Vector3 position = {
+                center.x +
+                    std::cos(angle) *
+                    size.x * 0.25f,
+
+                0.0f,
+
+                center.z +
+                    std::sin(angle) *
+                    size.z * 0.25f
+            };
+
+            DrawModelEx(
+                alienCrystalSpikeModel,
+                position,
+                {0.0f, 1.0f, 0.0f},
+                (float)(seed * 23 + i * 55),
+                {
+                    0.45f + (i % 2) * 0.15f,
+                    2.3f + (i % 3) * 0.65f,
+                    0.45f + (i % 2) * 0.15f
+                },
+                Color{220, 190, 255, 255}
+            );
+        }
+    }
+
+
+    void DrawAlienRuin(
+        Vector3 center,
+        Vector3 size,
+        int index)
+    {
+        if (!alienMaterialsLoaded)
+        {
+            DrawCubeV(
+                center,
+                size,
+                Color{56, 64, 78, 255}
+            );
+            return;
+        }
+
+        DrawModelEx(
+            alienMetalCubeModel,
+            center,
+            {0.0f, 1.0f, 0.0f},
+            0.0f,
+            size,
+            Color{145, 160, 182, 255}
+        );
+
+        // Bright technology panel on the face of the ruin.
+        Vector3 panelCenter = {
+            center.x,
+            center.y,
+            center.z -
+                size.z * 0.5f -
+                0.04f
+        };
+
+        DrawModelEx(
+            alienPanelCubeModel,
+            panelCenter,
+            {0.0f, 1.0f, 0.0f},
+            0.0f,
+            {
+                size.x * 0.70f,
+                size.y * 0.48f,
+                0.08f
+            },
+            Color{180, 220, 255, 255}
+        );
+
+        // Purple energy nodes immediately distinguish these from Reactor Yard.
+        for (int side : {-1, 1})
+        {
+            DrawSphere(
+                {
+                    center.x +
+                        side * size.x * 0.32f,
+                    center.y +
+                        size.y * 0.36f,
+                    center.z -
+                        size.z * 0.51f
+                },
+                0.16f,
+                index % 2 == 0
+                    ? Color{185, 90, 255, 255}
+                    : Color{75, 225, 245, 255}
+            );
+        }
+    }
+
+
+    void DrawAlienOrganicGrowth(
+        Vector3 center,
+        Vector3 size,
+        int seed)
+    {
+        if (!alienMaterialsLoaded)
+        {
+            DrawCubeV(
+                center,
+                size,
+                Color{65, 85, 52, 255}
+            );
+            return;
+        }
+
+        for (int i = 0; i < 5; i++)
+        {
+            float angle =
+                seed * 0.61f +
+                i * 1.2566370614f;
+
+            Vector3 position = {
+                center.x +
+                    std::cos(angle) *
+                    size.x * 0.22f,
+                0.42f +
+                    (i % 2) * 0.42f,
+                center.z +
+                    std::sin(angle) *
+                    size.z * 0.22f
+            };
+
+            DrawModelEx(
+                alienOrganicSphereModel,
+                position,
+                {0.0f, 1.0f, 0.0f},
+                (float)(i * 31 + seed * 13),
+                {
+                    0.75f + (i % 3) * 0.22f,
+                    0.90f + (i % 2) * 0.50f,
+                    0.75f + (i % 3) * 0.22f
+                },
+                Color{160, 185, 135, 255}
+            );
+        }
+
+        // Small crystal bud gives each growth a clear alien silhouette.
+        DrawModelEx(
+            alienCrystalSpikeModel,
+            {
+                center.x,
+                0.3f,
+                center.z
+            },
+            {0.0f, 1.0f, 0.0f},
+            (float)(seed * 29),
+            {0.42f, 2.0f, 0.42f},
+            Color{210, 155, 255, 255}
+        );
+    }
+
+
+    void DrawAlienArtifact()
+    {
+        float time =
+            (float)GetTime();
+
+        float pulse =
+            0.5f +
+            0.5f *
+            std::sin(time * 2.8f);
+
+        if (!alienMaterialsLoaded)
+        {
+            DrawCube(
+                {0.0f, 1.0f, 0.0f},
+                8.0f,
+                2.0f,
+                8.0f,
+                Color{58, 60, 80, 255}
+            );
+            return;
+        }
+
+        // Ancient alien-metal dais.
+        DrawModelEx(
+            alienMetalCubeModel,
+            {0.0f, 0.40f, 0.0f},
+            {0.0f, 1.0f, 0.0f},
+            0.0f,
+            {8.2f, 0.80f, 8.2f},
+            Color{125, 145, 172, 255}
+        );
+
+        // Four alien-tech monoliths.
+        const Vector3 pylons[4] = {
+            {-3.0f, 1.55f, -3.0f},
+            { 3.0f, 1.55f, -3.0f},
+            {-3.0f, 1.55f,  3.0f},
+            { 3.0f, 1.55f,  3.0f}
+        };
+
+        for (int i = 0; i < 4; i++)
+        {
+            DrawModelEx(
+                alienPanelCubeModel,
+                pylons[i],
+                {0.0f, 1.0f, 0.0f},
+                (float)(i * 90),
+                {0.72f, 2.5f, 0.72f},
+                Color{145, 200, 215, 255}
+            );
+
+            DrawSphere(
+                {
+                    pylons[i].x,
+                    2.95f,
+                    pylons[i].z
+                },
+                0.16f + pulse * 0.06f,
+                i % 2 == 0
+                    ? Color{185, 90, 255, 255}
+                    : Color{70, 230, 245, 255}
+            );
+        }
+
+        // Central metallic containment column.
+        DrawModelEx(
+            alienMetalCylinderModel,
+            {0.0f, 0.85f, 0.0f},
+            {0.0f, 1.0f, 0.0f},
+            0.0f,
+            {1.35f, 2.4f, 1.35f},
+            Color{120, 145, 175, 255}
+        );
+
+        // Floating crystal core.
+        float crystalY =
+            2.9f +
+            std::sin(time * 1.7f) *
+            0.22f;
+
+        DrawModelEx(
+            alienCrystalSpikeModel,
+            {0.0f, crystalY, 0.0f},
+            {0.0f, 1.0f, 0.0f},
+            time * 34.0f,
+            {
+                0.90f + pulse * 0.08f,
+                2.7f,
+                0.90f + pulse * 0.08f
+            },
+            Color{225, 175, 255, 255}
+        );
+
+        // Four orbiting crystal shards.
+        for (int i = 0; i < 4; i++)
+        {
+            float angle =
+                time * 0.65f +
+                i * 1.57079632679f;
+
+            Vector3 shard = {
+                std::cos(angle) * 2.35f,
+                3.25f +
+                    std::sin(
+                        time * 1.9f + i
+                    ) * 0.20f,
+                std::sin(angle) * 2.35f
+            };
+
+            DrawModelEx(
+                alienCrystalSpikeModel,
+                shard,
+                {0.0f, 1.0f, 0.0f},
+                -time * 48.0f + i * 90.0f,
+                {0.28f, 1.05f, 0.28f},
+                i % 2 == 0
+                    ? Color{200, 120, 255, 255}
+                    : Color{90, 235, 255, 255}
+            );
+
+            DrawLine3D(
+                {0.0f, crystalY + 0.5f, 0.0f},
+                shard,
+                i % 2 == 0
+                    ? Color{170, 75, 255, 170}
+                    : Color{70, 220, 255, 170}
+            );
+        }
+    }
+
+
+    void DrawAlienAmbience()
+    {
+        float time =
+            (float)GetTime();
+
+        // Floating alien motes around the battlefield.
+        for (int i = 0; i < 22; i++)
+        {
+            float angle =
+                i * 1.61803398875f;
+
+            float radius =
+                7.0f +
+                (float)((i * 7) % 19);
+
+            Vector3 position = {
+                std::cos(angle) * radius,
+                0.8f +
+                    std::fmod(
+                        time * 0.35f +
+                        i * 0.23f,
+                        2.6f
+                    ),
+                std::sin(angle) * radius
+            };
+
+            DrawSphere(
+                position,
+                0.045f +
+                    (i % 3) * 0.018f,
+                i % 2 == 0
+                    ? Color{190, 95, 255, 120}
+                    : Color{75, 225, 245, 115}
+            );
+        }
+
+        // Perimeter beacons.
+        const Vector3 beacons[4] = {
+            {-27.5f, 0.0f,-27.5f},
+            { 27.5f, 0.0f,-27.5f},
+            {-27.5f, 0.0f, 27.5f},
+            { 27.5f, 0.0f, 27.5f}
+        };
+
+        for (int i = 0; i < 4; i++)
+        {
+            float glow =
+                0.5f +
+                0.5f *
+                std::sin(
+                    time * 4.0f +
+                    i * 1.6f
+                );
+
+            DrawSphere(
+                {
+                    beacons[i].x,
+                    1.0f,
+                    beacons[i].z
+                },
+                0.14f + glow * 0.09f,
+                i % 2 == 0
+                    ? Color{190, 80, 255, 255}
+                    : Color{70, 230, 245, 255}
+            );
+        }
+    }
+
+
+    void DrawAlienOutpost(
+        const std::vector<Obstacle>& obstacles)
+    {
+        DrawAlienFloor();
+
+        const float wallCenter =
+            CurrentArenaWallCenter();
+
+        const float visualSize =
+            CurrentArenaVisualSize();
+
+        // Dark alien-rock perimeter cliffs.
+        if (alienMaterialsLoaded)
+        {
+            const Vector3 wallCenters[4] = {
+                {0.0f, 2.5f, -wallCenter},
+                {0.0f, 2.5f,  wallCenter},
+                {-wallCenter, 2.5f, 0.0f},
+                { wallCenter, 2.5f, 0.0f}
+            };
+
+            const Vector3 wallScales[4] = {
+                {visualSize, 2.0f, 0.80f},
+                {visualSize, 2.0f, 0.80f},
+                {0.80f, 2.0f, visualSize},
+                {0.80f, 2.0f, visualSize}
+            };
+
+            for (int i = 0; i < 4; i++)
+            {
+                DrawModelEx(
+                    alienRockSphereModel,
+                    wallCenters[i],
+                    {0.0f, 1.0f, 0.0f},
+                    0.0f,
+                    wallScales[i],
+                    Color{110, 125, 138, 255}
+                );
+            }
+        }
+
+        // Soft luminous perimeter strips.
+        const Color violet =
+            Color{155, 70, 235, 190};
+
+        DrawCube(
+            {0.0f, 0.03f, -29.2f},
+            57.0f, 0.05f, 0.13f,
+            violet
+        );
+        DrawCube(
+            {0.0f, 0.03f, 29.2f},
+            57.0f, 0.05f, 0.13f,
+            violet
+        );
+        DrawCube(
+            {-29.2f, 0.03f, 0.0f},
+            0.13f, 0.05f, 57.0f,
+            violet
+        );
+        DrawCube(
+            {29.2f, 0.03f, 0.0f},
+            0.13f, 0.05f, 57.0f,
+            violet
+        );
+
+        for (int i = 1; i < (int)obstacles.size(); i++)
+        {
+            const Obstacle& obstacle =
+                obstacles[i];
+
+            Vector3 center =
+                BoxCenter(obstacle.box);
+
+            Vector3 size =
+                BoxSize(obstacle.box);
+
+            if (i >= 1 && i <= 4)
+            {
+                DrawAlienRuin(
+                    center,
+                    size,
+                    i
+                );
+            }
+            else if (i >= 5 && i <= 8)
+            {
+                DrawAlienRockCluster(
+                    center,
+                    size,
+                    i
+                );
+            }
+            else
+            {
+                DrawAlienOrganicGrowth(
+                    center,
+                    size,
+                    i
+                );
+            }
+        }
+
+        DrawAlienArtifact();
+        DrawAlienAmbience();
+    }
+
+
+    void DrawArena(
+        const std::vector<Obstacle>& obstacles)
+    {
+        if (activeArenaMap == ArenaMap::ALIEN_OUTPOST)
+        {
+            DrawAlienOutpost(obstacles);
+            return;
+        }
+
+        DrawReactorYard(obstacles);
+    }
+
+
+    void DrawTank(
+        const Combatant& c,
+        Model& bodyModel,
+        Model& turretModel)
     {
         if (!c.alive)
             return;
 
-        DrawModelEx(
-            bodyModel,
-            {c.position.x, 0.48f, c.position.z},
-            {0.0f, 1.0f, 0.0f},
+        float time =
+            (float)GetTime();
+
+        const bool alienTankStyle =
+            activeArenaMap == ArenaMap::ALIEN_OUTPOST;
+
+        const bool currentTankMaterialsLoaded =
+            alienTankStyle
+            ? alienMaterialsLoaded
+            : reactorMaterialsLoaded;
+
+        // Contact shadow keeps the tank visually grounded.
+        DrawCylinder(
+            {
+                c.position.x,
+                0.035f,
+                c.position.z
+            },
+            0.78f,
+            0.78f,
+            0.025f,
+            20,
+            Color{8, 9, 12, 155}
+        );
+
+        // If Reactor Yard materials are unavailable, retain the old simple
+        // colored tank so the vehicle never disappears because of an asset
+        // problem.
+        if (!currentTankMaterialsLoaded)
+        {
+            DrawModelEx(
+                bodyModel,
+                {
+                    c.position.x,
+                    0.48f,
+                    c.position.z
+                },
+                {0.0f, 1.0f, 0.0f},
+                c.bodyYaw,
+                {1.0f, 1.0f, 1.0f},
+                c.color
+            );
+
+            float fallbackTurretYaw =
+                DirectionYaw(c.aimDirection);
+
+            DrawModelEx(
+                turretModel,
+                {
+                    c.position.x,
+                    1.02f,
+                    c.position.z
+                },
+                {0.0f, 1.0f, 0.0f},
+                fallbackTurretYaw,
+                {1.0f, 1.0f, 1.0f},
+                c.color
+            );
+
+            Vector3 fallbackDirection =
+                NormalizeXZ(c.aimDirection);
+
+            Vector3 fallbackStart = {
+                c.position.x,
+                1.12f,
+                c.position.z
+            };
+
+            Vector3 fallbackEnd =
+                Add(
+                    fallbackStart,
+                    Scale(
+                        fallbackDirection,
+                        1.75f
+                    )
+                );
+
+            DrawCylinderEx(
+                fallbackStart,
+                fallbackEnd,
+                0.10f,
+                0.10f,
+                10,
+                Color{35, 36, 43, 255}
+            );
+
+            return;
+        }
+
+        // Map-specific tank material family. Reactor Yard keeps the existing
+        // industrial look; Alien Outpost uses alien metal / tech panels and
+        // cooler purple-cyan details.
+        Model& tankDarkModel =
+            alienTankStyle
+            ? alienMetalCubeModel
+            : reactorDarkMetalCubeModel;
+
+        Model& tankPaintModel =
+            alienTankStyle
+            ? alienMetalCubeModel
+            : reactorPaintedMetalCubeModel;
+
+        Model& tankRearModel =
+            alienTankStyle
+            ? alienPanelCubeModel
+            : reactorHazardCubeModel;
+
+        Model& tankDetailModel =
+            alienTankStyle
+            ? alienPanelCubeModel
+            : reactorMachineryCubeModel;
+
+        const Color treadTint =
+            alienTankStyle
+            ? Color{118, 138, 160, 255}
+            : Color{155, 158, 164, 255};
+
+        const Color hullTint =
+            alienTankStyle
+            ? Color{150, 170, 195, 255}
+            : Color{190, 194, 198, 255};
+
+        const Color deckTint =
+            alienTankStyle
+            ? Color{105, 125, 155, 255}
+            : Color{178, 181, 188, 255};
+
+        const Color rearPlateTint =
+            alienTankStyle
+            ? Color{175, 215, 235, 255}
+            : WHITE;
+
+        const Color turretTint =
+            alienTankStyle
+            ? Color{132, 155, 185, 255}
+            : Color{185, 188, 194, 255};
+
+        const Color hatchTint =
+            alienTankStyle
+            ? Color{170, 215, 230, 255}
+            : Color{205, 208, 210, 255};
+
+        const Color barrelTint =
+            alienTankStyle
+            ? Color{105, 135, 170, 255}
+            : Color{145, 148, 154, 255};
+
+        const Color detailTint =
+            alienTankStyle
+            ? Color{185, 220, 235, 255}
+            : Color{185, 187, 190, 255};
+
+        const Color exhaustTint =
+            alienTankStyle
+            ? Color{90, 112, 140, 255}
+            : Color{118, 121, 128, 255};
+
+        const Color antennaTint =
+            alienTankStyle
+            ? Color{90, 225, 245, 255}
+            : Color{72, 76, 85, 255};
+
+        const Color muzzleInnerTint =
+            alienTankStyle
+            ? Color{85, 225, 245, 255}
+            : Color{40, 42, 47, 255};
+
+        // Body-local axes. Arena yaw uses +Z as forward.
+        float bodyRadians =
+            c.bodyYaw * DEG2RAD;
+
+        Vector3 bodyForward = {
+            std::sin(bodyRadians),
+            0.0f,
+            std::cos(bodyRadians)
+        };
+
+        Vector3 bodyRight = {
+            std::cos(bodyRadians),
+            0.0f,
+            -std::sin(bodyRadians)
+        };
+
+        // -----------------------------------------------------------------
+        // TREADS / LOWER CHASSIS
+        // -----------------------------------------------------------------
+        // Two dark-metal track housings give the tank a much heavier profile.
+        for (int side : {-1, 1})
+        {
+            Vector3 treadCenter =
+                Add(
+                    c.position,
+                    Scale(
+                        bodyRight,
+                        side * 0.67f
+                    )
+                );
+
+            treadCenter.y = 0.36f;
+
+            DrawTexturedBoxRotated(
+                tankDarkModel,
+                treadCenter,
+                {0.28f, 0.46f, 1.92f},
+                c.bodyYaw,
+                treadTint
+            );
+
+            // Colored armor strip makes team/player identity visible from the
+            // side without painting the whole tank a bright solid color.
+            Vector3 sidePlateCenter =
+                Add(
+                    treadCenter,
+                    Scale(
+                        bodyRight,
+                        side * 0.16f
+                    )
+                );
+
+            sidePlateCenter.y = 0.43f;
+
+            DrawTexturedBoxRotated(
+                tankPaintModel,
+                sidePlateCenter,
+                {0.07f, 0.18f, 0.92f},
+                c.bodyYaw,
+                c.color
+            );
+        }
+
+        // Main lower hull: neutral painted metal rather than solid team color.
+        DrawTexturedBoxRotated(
+            tankPaintModel,
+            {
+                c.position.x,
+                0.48f,
+                c.position.z
+            },
+            {1.18f, 0.48f, 1.72f},
             c.bodyYaw,
-            {1.0f, 1.0f, 1.0f},
-            c.color);
+            hullTint
+        );
 
-        float turretYaw = DirectionYaw(c.aimDirection);
+        // Upper armored deck.
+        Vector3 upperHull =
+            Add(
+                c.position,
+                Scale(bodyForward, -0.05f)
+            );
 
-        DrawModelEx(
-            turretModel,
-            {c.position.x, 1.02f, c.position.z},
-            {0.0f, 1.0f, 0.0f},
+        upperHull.y = 0.75f;
+
+        DrawTexturedBoxRotated(
+            tankDarkModel,
+            upperHull,
+            {0.98f, 0.24f, 1.18f},
+            c.bodyYaw,
+            deckTint
+        );
+
+        // Front identity armor plate.
+        Vector3 frontPlate =
+            Add(
+                c.position,
+                Scale(bodyForward, 0.79f)
+            );
+
+        frontPlate.y = 0.57f;
+
+        DrawTexturedBoxRotated(
+            tankPaintModel,
+            frontPlate,
+            {0.92f, 0.24f, 0.11f},
+            c.bodyYaw,
+            c.color
+        );
+
+        // Small industrial warning plate at the rear.
+        Vector3 rearWarning =
+            Add(
+                c.position,
+                Scale(bodyForward, -0.80f)
+            );
+
+        rearWarning.y = 0.58f;
+
+        DrawTexturedBoxRotated(
+            tankRearModel,
+            rearWarning,
+            {0.68f, 0.18f, 0.08f},
+            c.bodyYaw,
+            rearPlateTint
+        );
+
+        // -----------------------------------------------------------------
+        // TURRET
+        // -----------------------------------------------------------------
+        float turretYaw =
+            DirectionYaw(c.aimDirection);
+
+        // Colored turret ring stays visible even when only the top of another
+        // tank is exposed behind cover.
+        DrawTexturedBoxRotated(
+            tankPaintModel,
+            {
+                c.position.x,
+                0.93f,
+                c.position.z
+            },
+            {0.96f, 0.10f, 0.88f},
             turretYaw,
-            {1.0f, 1.0f, 1.0f},
-            c.color);
+            c.color
+        );
 
-        Vector3 barrelDirection = NormalizeXZ(c.aimDirection);
-        Vector3 barrelStart = {c.position.x, 1.12f, c.position.z};
-        Vector3 barrelEnd = Add(barrelStart, Scale(barrelDirection, 1.75f));
+        DrawTexturedBoxRotated(
+            tankDarkModel,
+            {
+                c.position.x,
+                1.10f,
+                c.position.z
+            },
+            {0.86f, 0.30f, 0.76f},
+            turretYaw,
+            turretTint
+        );
 
-        DrawCylinderEx(
-            barrelStart,
+        // Small painted-metal hatch on top of the turret.
+        DrawTexturedBoxRotated(
+            tankPaintModel,
+            {
+                c.position.x,
+                1.29f,
+                c.position.z
+            },
+            {0.42f, 0.08f, 0.38f},
+            turretYaw,
+            hatchTint
+        );
+
+        Vector3 barrelDirection =
+            NormalizeXZ(c.aimDirection);
+
+        if (LengthXZ(barrelDirection) <= 0.001f)
+            barrelDirection = {0.0f, 0.0f, -1.0f};
+
+        Vector3 barrelStart = {
+            c.position.x,
+            1.12f,
+            c.position.z
+        };
+
+        Vector3 barrelCenter =
+            Add(
+                barrelStart,
+                Scale(
+                    barrelDirection,
+                    1.03f
+                )
+            );
+
+        // Textured rectangular cannon barrel fits the industrial art style
+        // much better than the original flat-color cylinder.
+        DrawTexturedBoxRotated(
+            tankDarkModel,
+            barrelCenter,
+            {0.16f, 0.16f, 1.72f},
+            turretYaw,
+            barrelTint
+        );
+
+        Vector3 barrelEnd =
+            Add(
+                barrelStart,
+                Scale(
+                    barrelDirection,
+                    1.88f
+                )
+            );
+
+        // Muzzle collar carries a little player/team color.
+        DrawSphere(
             barrelEnd,
-            0.10f,
-            0.10f,
-            10,
-            Color{35, 36, 43, 255});
+            0.13f,
+            c.color
+        );
 
         DrawSphere(
-            {c.position.x, 1.65f, c.position.z},
+            barrelEnd,
+            0.085f,
+            muzzleInnerTint
+        );
+
+        // -----------------------------------------------------------------
+        // ENGINE / DETAIL PIECES
+        // -----------------------------------------------------------------
+        Vector3 rearEngine =
+            Add(
+                c.position,
+                Scale(bodyForward, -0.60f)
+            );
+
+        rearEngine.y = 0.78f;
+
+        DrawTexturedBoxRotated(
+            tankDetailModel,
+            rearEngine,
+            {0.62f, 0.22f, 0.32f},
+            c.bodyYaw,
+            detailTint
+        );
+
+        // Twin exhaust blocks.
+        for (int side : {-1, 1})
+        {
+            Vector3 exhaust =
+                Add(
+                    c.position,
+                    Scale(bodyForward, -0.91f)
+                );
+
+            exhaust =
+                Add(
+                    exhaust,
+                    Scale(
+                        bodyRight,
+                        side * 0.31f
+                    )
+                );
+
+            exhaust.y = 0.58f;
+
+            DrawTexturedBoxRotated(
+                tankDarkModel,
+                exhaust,
+                {0.18f, 0.22f, 0.24f},
+                c.bodyYaw,
+                exhaustTint
+            );
+        }
+
+        // Alien Outpost tanks get a pair of small crystal power fins and a
+        // pulsing rear energy node. These are visual only and do not change
+        // the existing tank hitbox.
+        if (alienTankStyle)
+        {
+            for (int side : {-1, 1})
+            {
+                Vector3 crystalBase =
+                    Add(
+                        c.position,
+                        Scale(
+                            bodyRight,
+                            side * 0.40f
+                        )
+                    );
+
+                crystalBase =
+                    Add(
+                        crystalBase,
+                        Scale(
+                            bodyForward,
+                            -0.28f
+                        )
+                    );
+
+                crystalBase.y = 0.97f;
+
+                DrawModelEx(
+                    alienCrystalSpikeModel,
+                    crystalBase,
+                    {0.0f, 1.0f, 0.0f},
+                    c.bodyYaw + side * 12.0f,
+                    {0.12f, 0.46f, 0.12f},
+                    side < 0
+                        ? Color{205, 120, 255, 255}
+                        : Color{75, 225, 245, 255}
+                );
+            }
+
+            float powerPulse =
+                0.5f +
+                0.5f *
+                std::sin(
+                    time * 5.0f +
+                    (
+                        c.colorIndex >= 0
+                        ? c.colorIndex
+                        : c.team + 2
+                    )
+                );
+
+            Vector3 powerNode =
+                Add(
+                    c.position,
+                    Scale(bodyForward, -0.34f)
+                );
+
+            powerNode.y = 1.38f;
+
+            DrawSphere(
+                powerNode,
+                0.08f + powerPulse * 0.035f,
+                Color{170, 90, 255, 255}
+            );
+        }
+
+        // Antenna and blinking identification beacon.
+        Vector3 antennaOffset =
+            Add(
+                Scale(bodyRight, -0.28f),
+                Scale(bodyForward, -0.12f)
+            );
+
+        Vector3 antennaBase =
+            Add(c.position, antennaOffset);
+
+        antennaBase.y = 1.30f;
+
+        Vector3 antennaTop =
+            antennaBase;
+
+        antennaTop.y = 1.93f;
+
+        DrawLine3D(
+            antennaBase,
+            antennaTop,
+            antennaTint
+        );
+
+        int beaconSeed =
+            c.colorIndex >= 0
+            ? c.colorIndex
+            : (c.team + 2);
+
+        bool beaconOn =
+            std::sin(
+                time * 4.5f +
+                beaconSeed * 0.65f
+            ) > -0.15f;
+
+        DrawSphere(
+            antennaTop,
+            beaconOn
+                ? 0.105f
+                : 0.075f,
+            beaconOn
+                ? (
+                    c.human
+                    ? (
+                        alienTankStyle
+                        ? Color{85, 235, 255, 255}
+                        : JENG_YELLOW
+                    )
+                    : c.color
+                )
+                : (
+                    alienTankStyle
+                    ? Color{65, 70, 105, 255}
+                    : Color{75, 76, 80, 255}
+                )
+        );
+
+        // A second identity light sits on the rear deck. Human remains yellow
+        // for immediate self-recognition; remote players use their team/color.
+        Vector3 identityLight =
+            Add(
+                c.position,
+                Scale(bodyForward, -0.26f)
+            );
+
+        identityLight.y = 1.34f;
+
+        DrawSphere(
+            identityLight,
             0.10f,
-            c.human ? JENG_YELLOW : c.color);
+            c.human
+                ? (
+                    alienTankStyle
+                    ? Color{85, 235, 255, 255}
+                    : JENG_YELLOW
+                )
+                : c.color
+        );
     }
+
 
     bool HasNameplateLineOfSight(
         const Camera3D& camera,
@@ -2181,6 +5003,54 @@ namespace
             }
         }
 
+        DrawText(
+            "MAP",
+            65,
+            535,
+            16,
+            JENG_RED
+        );
+
+        Rectangle reactorMapButton = {
+            65.0f,
+            560.0f,
+            145.0f,
+            42.0f
+        };
+
+        Rectangle alienMapButton = {
+            225.0f,
+            560.0f,
+            150.0f,
+            42.0f
+        };
+
+        if (
+            MenuButton(
+                reactorMapButton,
+                "REACTOR YARD",
+                settings.map ==
+                    ArenaMap::REACTOR_YARD
+            )
+        )
+        {
+            settings.map =
+                ArenaMap::REACTOR_YARD;
+        }
+
+        if (
+            MenuButton(
+                alienMapButton,
+                "ALIEN OUTPOST",
+                settings.map ==
+                    ArenaMap::ALIEN_OUTPOST
+            )
+        )
+        {
+            settings.map =
+                ArenaMap::ALIEN_OUTPOST;
+        }
+
         Rectangle settingsPanel = {
             435.0f,
             185.0f,
@@ -2207,6 +5077,19 @@ namespace
             220,
             30,
             JENG_YELLOW
+        );
+
+        DrawText(
+            TextFormat(
+                "MAP  //  %s",
+                ArenaMapName(settings.map)
+            ),
+            475,
+            253,
+            14,
+            settings.map == ArenaMap::ALIEN_OUTPOST
+                ? Color{180, 105, 245, 255}
+                : Color{160, 164, 178, 255}
         );
 
         const char* description = "";
@@ -2242,7 +5125,7 @@ namespace
         DrawText(
             description,
             475,
-            269,
+            281,
             16,
             Color{180, 183, 195, 255}
         );
@@ -2588,12 +5471,16 @@ namespace
                 "|" +
                 std::to_string((int)settings.timeLimitSeconds) +
                 "|" +
-                std::to_string(settings.selectedColorIndex);
+                std::to_string(settings.selectedColorIndex) +
+                "|" +
+                ArenaMapPacketName(settings.map);
 
             if (NetSendLine(packet))
             {
                 app.arena.status =
-                    "Creating Arena lobby...";
+                    std::string("Creating ") +
+                    ArenaMapName(settings.map) +
+                    " lobby...";
             }
             else
             {
@@ -2632,16 +5519,28 @@ namespace
 
 
 
-    bool ArenaLobbyIsTeamMode(const std::string& mode)
+    bool ArenaLobbyIsTeamMode(
+        const std::string& modeToken)
     {
+        const std::string mode =
+            ArenaBaseModeToken(
+                modeToken
+            );
+
         return
             mode == "TEAM_2V2" ||
             mode == "TEAM_3V3";
     }
 
 
-    const char* ArenaLobbyModeLabel(const std::string& mode)
+    const char* ArenaLobbyModeLabel(
+        const std::string& modeToken)
     {
+        const std::string mode =
+            ArenaBaseModeToken(
+                modeToken
+            );
+
         if (mode == "SCORE_FFA") return "SCORE FFA";
         if (mode == "TIME_FFA") return "TIME FFA";
         if (mode == "DUEL") return "DUEL";
@@ -2713,9 +5612,31 @@ namespace
             JENG_RED
         );
 
+        const ArenaMap lobbyMap =
+            ArenaMapFromModeToken(
+                lobby.mode
+            );
+
+        DrawText(
+            TextFormat(
+                "MAP  //  %s",
+                ArenaMapName(lobbyMap)
+            ),
+            300,
+            137,
+            16,
+            lobbyMap == ArenaMap::ALIEN_OUTPOST
+                ? Color{190, 105, 245, 255}
+                : JENG_YELLOW
+        );
+
         std::string ruleText;
 
-        if (lobby.mode == "TIME_FFA")
+        if (
+            ArenaBaseModeToken(
+                lobby.mode
+            ) == "TIME_FFA"
+        )
         {
             ruleText =
                 "TIME  " +
@@ -3322,19 +6243,66 @@ namespace
             JENG_YELLOW
         );
 
+        // Four-segment health bar. Each segment represents one 25 HP hit.
+        // Full health is green, then the remaining segments change to
+        // yellow/orange/red as the player loses health.
         DrawText(
-            TextFormat(
-                "HEALTH  %d / %d",
-                player.health,
-                MAX_HEALTH
-            ),
+            "HEALTH",
             32,
             62,
-            19,
-            player.health > 25
-                ? RAYWHITE
-                : JENG_RED
+            17,
+            RAYWHITE
         );
+
+        const int healthSegments =
+            std::max(
+                0,
+                std::min(
+                    4,
+                    (player.health + 24) / 25
+                )
+            );
+
+        Color healthColor =
+            healthSegments >= 4
+                ? Color{85, 220, 110, 255}
+                : healthSegments == 3
+                    ? Color{245, 205, 66, 255}
+                    : healthSegments == 2
+                        ? Color{255, 145, 55, 255}
+                        : Color{235, 64, 64, 255};
+
+        const int healthBarX = 115;
+        const int healthBarY = 61;
+        const int healthSegmentWidth = 47;
+        const int healthSegmentHeight = 18;
+        const int healthSegmentGap = 5;
+
+        for (int segment = 0; segment < 4; segment++)
+        {
+            const int x =
+                healthBarX +
+                segment *
+                (healthSegmentWidth + healthSegmentGap);
+
+            DrawRectangle(
+                x,
+                healthBarY,
+                healthSegmentWidth,
+                healthSegmentHeight,
+                segment < healthSegments
+                    ? healthColor
+                    : Color{48, 50, 58, 255}
+            );
+
+            DrawRectangleLines(
+                x,
+                healthBarY,
+                healthSegmentWidth,
+                healthSegmentHeight,
+                Color{125, 128, 140, 255}
+            );
+        }
 
         if (IsTeamMode(settings))
         {
@@ -3787,55 +6755,48 @@ namespace
 
     void BuildArenaObstacles()
     {
+        if (activeArenaMap == ArenaMap::ALIEN_OUTPOST)
+        {
+            // Map 2 local prototype: ALIEN OUTPOST
+            // Larger than Reactor Yard with a more open central battlefield.
+            obstacles = {
+                // Central alien artifact.
+                {{{-4.2f, 0.0f, -4.2f}, {4.2f, 5.0f, 4.2f}}},
+
+                // Cardinal alien ruins.
+                {{{-25.0f, 0.0f, -3.0f}, {-19.0f, 3.4f, 3.0f}}},
+                {{{ 19.0f, 0.0f, -3.0f}, { 25.0f, 3.4f, 3.0f}}},
+                {{{ -3.0f, 0.0f,-25.0f}, {  3.0f, 3.4f,-19.0f}}},
+                {{{ -3.0f, 0.0f, 19.0f}, {  3.0f, 3.4f, 25.0f}}},
+
+                // Large crystal / rock fields.
+                {{{-20.5f, 0.0f,-20.5f}, {-14.0f, 3.8f,-14.0f}}},
+                {{{ 14.0f, 0.0f,-20.5f}, { 20.5f, 3.8f,-14.0f}}},
+                {{{-20.5f, 0.0f, 14.0f}, {-14.0f, 3.8f, 20.5f}}},
+                {{{ 14.0f, 0.0f, 14.0f}, { 20.5f, 3.8f, 20.5f}}},
+
+                // Inner organic growths force players to weave rather than
+                // having four completely straight firing lanes.
+                {{{-12.0f, 0.0f, -8.5f}, {-8.0f, 2.8f, -4.0f}}},
+                {{{  8.0f, 0.0f,  4.0f}, {12.0f, 2.8f,  8.5f}}},
+                {{{-12.0f, 0.0f,  4.0f}, {-8.0f, 2.8f,  8.5f}}},
+                {{{  8.0f, 0.0f, -8.5f}, {12.0f, 2.8f, -4.0f}}}
+            };
+
+            return;
+        }
+
+        // Map 1: REACTOR YARD
         obstacles = {
-            {
-                {
-                    {-3.0f, 0.0f, -3.0f},
-                    { 3.0f, 4.0f,  3.0f}
-                }
-            },
-
-            {
-                {
-                    {-14.0f, 0.0f, -2.0f},
-                    {-10.0f, 3.6f,  2.0f}
-                }
-            },
-
-            {
-                {
-                    {10.0f, 0.0f, -2.0f},
-                    {14.0f, 3.6f,  2.0f}
-                }
-            },
-
-            {
-                {
-                    {-2.0f, 0.0f, -14.0f},
-                    { 2.0f, 3.6f, -10.0f}
-                }
-            },
-
-            {
-                {
-                    {-2.0f, 0.0f, 10.0f},
-                    { 2.0f, 3.6f, 14.0f}
-                }
-            },
-
-            {
-                {
-                    {-13.0f, 0.0f, -13.0f},
-                    { -9.0f, 2.5f,  -9.0f}
-                }
-            },
-
-            {
-                {
-                    { 9.0f, 0.0f,  9.0f},
-                    {13.0f, 2.5f, 13.0f}
-                }
-            }
+            {{{-4.5f, 0.0f, -4.5f}, { 4.5f, 4.2f,  4.5f}}},
+            {{{-20.0f, 0.0f, -2.2f}, {-15.0f, 3.2f,  2.2f}}},
+            {{{ 15.0f, 0.0f, -2.2f}, { 20.0f, 3.2f,  2.2f}}},
+            {{{ -2.2f, 0.0f,-20.0f}, {  2.2f, 3.2f,-15.0f}}},
+            {{{ -2.2f, 0.0f, 15.0f}, {  2.2f, 3.2f, 20.0f}}},
+            {{{-17.0f, 0.0f,-17.0f}, {-12.0f, 2.3f,-12.0f}}},
+            {{{ 12.0f, 0.0f,-17.0f}, { 17.0f, 2.3f,-12.0f}}},
+            {{{-17.0f, 0.0f, 12.0f}, {-12.0f, 2.3f, 17.0f}}},
+            {{{ 12.0f, 0.0f, 12.0f}, { 17.0f, 2.3f, 17.0f}}}
         };
     }
 
@@ -3946,6 +6907,16 @@ namespace
             return false;
 
         settings = MatchSettings{};
+        settings.map =
+            ArenaMapFromModeToken(
+                app.arena.mode
+            );
+
+        activeArenaMap =
+            settings.map;
+
+        BuildArenaObstacles();
+
         settings.mode =
             ArenaModeFromPacketName(
                 app.arena.mode
@@ -4335,24 +7306,10 @@ namespace
     void DrawOnlineCombatBanner(
         const AppState& app)
     {
-        DrawText(
-            "ONLINE SERVER-AUTHORIZED COMBAT",
-            32,
-            147,
-            15,
-            Color{90, 220, 130, 255}
-        );
-
-        DrawText(
-            TextFormat(
-                "WORLD SNAPSHOT  %d",
-                app.arena.worldSequence
-            ),
-            32,
-            166,
-            14,
-            Color{165, 168, 180, 255}
-        );
+        // Intentionally empty. The old online-debug lines were useful while
+        // networking was being built, but they no longer belong in the final
+        // combat HUD.
+        (void)app;
     }
 
 
@@ -4922,6 +7879,11 @@ namespace
     {
         NormalizeSettings(settings);
 
+        activeArenaMap =
+            settings.map;
+
+        BuildArenaObstacles();
+
         ConfigureCombatants(
             combatants,
             settings,
@@ -4984,6 +7946,9 @@ namespace
             TEXTURE_FILTER_BILINEAR
         );
 
+        LoadReactorYardMaterials();
+        LoadAlienOutpostMaterials();
+
         bodyModel =
             LoadModelFromMesh(
                 GenMeshCube(
@@ -5001,6 +7966,9 @@ namespace
                     0.95f
                 )
             );
+
+        activeArenaMap =
+            ArenaMap::REACTOR_YARD;
 
         BuildArenaObstacles();
 
@@ -5278,10 +8246,12 @@ void ArenaUpdateAndRender(
 
             MoveCombatant(
                 playerRef,
+                0,
                 movement,
                 dt,
                 PLAYER_SPEED,
-                obstacles
+                obstacles,
+                combatants
             );
         }
     }
@@ -5461,13 +8431,16 @@ void ArenaUpdateAndRender(
                     )
                 );
 
+            const float projectileBoundary =
+                CurrentArenaHalf() + 0.5f;
+
             if (
                 std::fabs(
                     projectile.position.x
-                ) > 22.0f ||
+                ) > projectileBoundary ||
                 std::fabs(
                     projectile.position.z
-                ) > 22.0f
+                ) > projectileBoundary
             )
             {
                 projectile.active = false;
@@ -5731,6 +8704,8 @@ void ArenaShutdown()
 
     UnloadModel(bodyModel);
     UnloadModel(turretModel);
+    UnloadReactorYardMaterials();
+    UnloadAlienOutpostMaterials();
     UnloadRenderTexture(arenaTarget);
 
     obstacles.clear();

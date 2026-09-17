@@ -20,6 +20,7 @@
 #include "win_icon.h"
 #include "mac_bundle.h"
 #include "ui/appearance.h"
+#include "ui/audio_settings.h"
 
 #include <algorithm>
 
@@ -35,7 +36,8 @@ namespace
         app.showHelpMenu ||
         app.commandPopup.open ||
         app.pendingChallenge.active ||
-        IsAppearanceSettingsOpen();
+        IsAppearanceSettingsOpen() ||
+        IsAudioSettingsOpen();
 }
 
     void DrawMainApp(AppState& app)
@@ -76,6 +78,9 @@ namespace
 
         if (IsAppearanceSettingsOpen())
             DrawAppearanceSettings();
+
+        if (IsAudioSettingsOpen())
+            DrawAudioSettings();
     }
 }
 
@@ -83,6 +88,7 @@ int main()
 {
     PrepareMacBundleWorkingDirectory();
     LoadAppearanceSettings();
+    LoadAudioSettings();
     
     // The standard Windows maximize button works because the window is resizable.
     SetConfigFlags(
@@ -96,6 +102,8 @@ int main()
         WINDOW_HEIGHT,
         "JENG CHAT"
     );
+
+    InitializeJengAudio();
 
     SetJengTaskbarIcon(
     GetWindowHandle()
@@ -168,6 +176,10 @@ int main()
                 else
                     ArenaHandleEscape(app);
             }
+            else if (IsAudioSettingsOpen())
+            {
+                CancelAudioSettings();
+            }
             else if (IsAppearanceSettingsOpen())
             {
                 CancelAppearanceSettings();
@@ -195,6 +207,11 @@ int main()
         bool arenaActive =
             app.screen == AppScreen::MAIN &&
             app.gameView == GameView::ARENA;
+
+        UpdateJengAudio(
+            app.screen == AppScreen::MAIN,
+            arenaActive
+        );
 
 
         // Arena renders into its own 1280x720 target. It deliberately does
@@ -262,6 +279,7 @@ int main()
     NetDisconnect();
 
     ArenaShutdown();
+    ShutdownJengAudio();
 
     UnloadCardAssets();
     UnloadRenderTexture(target);

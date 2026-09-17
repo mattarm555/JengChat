@@ -1,6 +1,7 @@
 #include "raylib.h"
 #include "arena.h"
 #include "../networking.h"
+#include "../ui/audio_settings.h"
 
 #include <algorithm>
 #include <cctype>
@@ -163,6 +164,10 @@ namespace
 
     constexpr Color JENG_RED = {235, 64, 64, 255};
     constexpr Color JENG_YELLOW = {245, 205, 66, 255};
+
+    // Shot cadence is still tracked locally so held LMB does not spam
+    // the sound faster than the server-authoritative fire cooldown.
+    float onlineFireSoundTimer = 0.0f;
 
     // Team modes use fixed team colors so affiliation is readable instantly.
     constexpr Color TEAM_RED = {235, 64, 64, 255};
@@ -830,6 +835,8 @@ namespace
         projectile.position = start;
         projectile.velocity = Scale(direction, BULLET_SPEED);
         projectiles.push_back(projectile);
+
+        PlayJengSound(JengSoundEffect::ARENA_SHOT);
     }
 
     void ConfigureCombatants(
@@ -1053,6 +1060,7 @@ namespace
         mine.active = true;
 
         mines.push_back(mine);
+        PlayJengSound(JengSoundEffect::ARENA_MINE);
     }
 
     void UpdateLocalMines(
@@ -1733,6 +1741,8 @@ namespace
                     explosions,
                     particles
                 );
+
+                PlayJengSound(JengSoundEffect::ARENA_DEATH);
             }
 
             trackedDeaths[i] = combatants[i].deaths;
@@ -3865,6 +3875,7 @@ namespace
         onlineLastWorldSequence = -1;
         onlineInputSequence = 0;
         onlineInputSendAccumulator = 0.0f;
+        onlineFireSoundTimer = 0.0f;
 
         onlineTargetPositions.clear();
         onlineTargetBodyYaws.clear();
@@ -4045,6 +4056,7 @@ namespace
             app.arena.worldSequence;
         onlineInputSequence = 0;
         onlineInputSendAccumulator = 0.0f;
+        onlineFireSoundTimer = 0.0f;
         onlineMatchInitialized = true;
 
         deathExplosions.clear();
@@ -4450,6 +4462,7 @@ namespace
         )
         {
             NetSendLine("ARENA_MINE");
+            PlayJengSound(JengSoundEffect::ARENA_MINE);
         }
 
         Vector3 cameraForward = {
@@ -4634,6 +4647,22 @@ namespace
         bool fireRequested =
             player.alive &&
             IsMouseButtonDown(MOUSE_BUTTON_LEFT);
+
+        onlineFireSoundTimer =
+            std::max(
+                0.0f,
+                onlineFireSoundTimer - dt
+            );
+
+        if (
+            fireRequested &&
+            onlineFireSoundTimer <= 0.0f
+        )
+        {
+            PlayJengSound(JengSoundEffect::ARENA_SHOT);
+            onlineFireSoundTimer =
+                PLAYER_FIRE_COOLDOWN;
+        }
 
         // ----------------------------------------------------
         // Send movement + aim + fire input at 30 Hz.
@@ -5642,6 +5671,7 @@ void ArenaDrawToWindow()
 
 void ArenaHandleEscape(AppState& app)
 {
+
     if (!arenaInitialized)
     {
         app.gameView = GameView::HOME;

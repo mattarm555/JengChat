@@ -1942,6 +1942,123 @@ namespace
     }
 
 
+    bool ArenaIncomingInviteIsOpen(
+        const AppState& app)
+    {
+        return
+            app.pendingChallenge.active &&
+            app.pendingChallenge.game == GameView::ARENA;
+    }
+
+    void DrawArenaIncomingInvite(
+        AppState& app)
+    {
+        if (!ArenaIncomingInviteIsOpen(app))
+            return;
+
+        PendingChallengeState& challenge =
+            app.pendingChallenge;
+
+        DrawRectangle(
+            0, 0,
+            SCREEN_WIDTH, SCREEN_HEIGHT,
+            Color{0, 0, 0, 220}
+        );
+
+        Rectangle panel = {
+            SCREEN_WIDTH / 2.0f - 330.0f,
+            SCREEN_HEIGHT / 2.0f - 155.0f,
+            660.0f,
+            310.0f
+        };
+
+        DrawRectangleRounded(
+            panel, 0.06f, 10,
+            Color{20, 21, 27, 255}
+        );
+
+        DrawRectangleRoundedLinesEx(
+            panel, 0.06f, 10, 2.0f,
+            JENG_YELLOW
+        );
+
+        DrawText(
+            "JENG ARENA INVITE",
+            (int)panel.x + 34,
+            (int)panel.y + 30,
+            30,
+            JENG_RED
+        );
+
+        DrawText(
+            "INCOMING LOBBY INVITATION",
+            (int)panel.x + 34,
+            (int)panel.y + 78,
+            16,
+            Color{165, 170, 184, 255}
+        );
+
+        DrawText(
+            challenge.message.c_str(),
+            (int)panel.x + 34,
+            (int)panel.y + 118,
+            17,
+            RAYWHITE
+        );
+
+        Rectangle acceptButton = {
+            panel.x + 55.0f,
+            panel.y + 205.0f,
+            245.0f,
+            52.0f
+        };
+
+        Rectangle declineButton = {
+            panel.x + panel.width - 300.0f,
+            panel.y + 205.0f,
+            245.0f,
+            52.0f
+        };
+
+        if (MenuButton(acceptButton, "ACCEPT INVITE", true))
+        {
+            if (NetSendLine("/accept"))
+            {
+                challenge.active = false;
+                challenge.error.clear();
+            }
+            else
+            {
+                challenge.error = NetLastError();
+            }
+        }
+
+        if (MenuButton(declineButton, "DECLINE"))
+        {
+            if (NetSendLine("/decline"))
+            {
+                challenge.active = false;
+                challenge.error.clear();
+            }
+            else
+            {
+                challenge.error = NetLastError();
+            }
+        }
+
+        if (!challenge.error.empty())
+        {
+            DrawText(
+                challenge.error.c_str(),
+                (int)panel.x + 34,
+                (int)panel.y + 276,
+                14,
+                JENG_RED
+            );
+        }
+    }
+
+
     bool ColorSwatchButton(
         Rectangle rect,
         Color color,
@@ -4940,6 +5057,10 @@ void ArenaUpdateAndRender(
             app
         );
 
+        DrawArenaIncomingInvite(
+            app
+        );
+
         EndTextureMode();
         return;
     }
@@ -4966,10 +5087,19 @@ void ArenaUpdateAndRender(
                 app
             );
 
+        DrawArenaIncomingInvite(
+            app
+        );
+
         EndTextureMode();
 
-        if (startMatch)
+        if (
+            startMatch &&
+            !ArenaIncomingInviteIsOpen(app)
+        )
+        {
             StartArenaMatch();
+        }
 
         return;
     }

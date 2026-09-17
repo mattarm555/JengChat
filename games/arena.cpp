@@ -4371,6 +4371,24 @@ namespace
                 (float)fontSize + 8.0f
             };
 
+            // Center four health segments above the nameplate, with a clear gap.
+            const int segments = std::max(0, std::min(4, (c.health + 24) / 25));
+            const Color barColor = segments >= 4 ? Color{85, 220, 110, 255}
+                : segments == 3 ? Color{245, 205, 66, 255}
+                : segments == 2 ? Color{255, 145, 55, 255}
+                : Color{235, 64, 64, 255};
+            const int barWidth = 76;
+            const int barHeight = 8;
+            const int barX = (int)screen.x - barWidth / 2;
+            const int barY = (int)background.y - barHeight - 5;
+            DrawRectangle(barX - 2, barY - 2, barWidth + 4, barHeight + 4,
+                Color{8, 9, 12, 220});
+            for (int segment = 0; segment < 4; ++segment)
+            {
+                DrawRectangle(barX + segment * 20, barY, 16, barHeight,
+                    segment < segments ? barColor : Color{48, 50, 58, 255});
+            }
+
             DrawRectangleRounded(
                 background,
                 0.35f,
@@ -6197,6 +6215,85 @@ namespace
     }
 
 
+    void DrawTopScores(
+        const std::vector<Combatant>& combatants,
+        const MatchSettings& settings,
+        float timeRemaining)
+    {
+        std::vector<std::string> scores;
+        std::vector<Color> colors;
+        if (IsTeamMode(settings))
+        {
+            // Keep red on the left and blue on the right for team matches.
+            scores.push_back(std::to_string(TeamScore(combatants, 0)));
+            scores.push_back(std::to_string(TeamScore(combatants, 1)));
+            colors.push_back(TEAM_RED);
+            colors.push_back(TEAM_BLUE);
+        }
+        else
+        {
+            std::vector<int> order;
+            for (int i = 0; i < (int)combatants.size(); ++i)
+                order.push_back(i);
+            // Match the TAB scoreboard's ranking, retaining roster order for ties.
+            std::stable_sort(order.begin(), order.end(), [&](int a, int b)
+            {
+                if (combatants[a].kills != combatants[b].kills)
+                    return combatants[a].kills > combatants[b].kills;
+                if (combatants[a].damageDealt != combatants[b].damageDealt)
+                    return combatants[a].damageDealt > combatants[b].damageDealt;
+                return combatants[a].deaths < combatants[b].deaths;
+            });
+            for (int i : order)
+            {
+                scores.push_back(std::to_string(combatants[i].kills));
+                colors.push_back(combatants[i].color);
+            }
+        }
+
+        if (scores.empty())
+            return;
+
+        const std::string subtitle = IsTimedMode(settings)
+            ? "TIME  " + FormatMatchTime(timeRemaining)
+            : "SCORE TO WIN  " + std::to_string(settings.scoreLimit);
+        const int maxRowWidth = 320;
+        const int gap = 8;
+        int fontSize = 34;
+        int rowWidth = 0;
+        int separatorWidth = 0;
+        // Fit all six scores without covering the upper-left player HUD.
+        do
+        {
+            separatorWidth = MeasureText("|", fontSize);
+            rowWidth = ((int)scores.size() - 1) * (separatorWidth + gap * 2);
+            for (const std::string& score : scores)
+                rowWidth += MeasureText(score.c_str(), fontSize);
+            if (rowWidth <= maxRowWidth || fontSize <= 10)
+                break;
+            --fontSize;
+        } while (true);
+
+        const int subtitleWidth = MeasureText(subtitle.c_str(), 16);
+        const int panelWidth = std::max(180, std::max(rowWidth, subtitleWidth) + 24);
+        DrawRectangle(SCREEN_WIDTH / 2 - panelWidth / 2, 18, panelWidth, 82, HUD_BG);
+        int x = SCREEN_WIDTH / 2 - rowWidth / 2;
+        for (int i = 0; i < (int)scores.size(); ++i)
+        {
+            DrawText(scores[i].c_str(), x, 27 + (34 - fontSize) / 2, fontSize, colors[i]);
+            x += MeasureText(scores[i].c_str(), fontSize);
+            if (i + 1 < (int)scores.size())
+            {
+                DrawText("|", x + gap, 27 + (34 - fontSize) / 2, fontSize,
+                    Color{165, 168, 180, 255});
+                x += separatorWidth + gap * 2;
+            }
+        }
+        DrawText(subtitle.c_str(), SCREEN_WIDTH / 2 - subtitleWidth / 2, 74, 16,
+            Color{200, 203, 215, 255});
+    }
+
+
     void DrawHud(
         const std::vector<Combatant>& combatants,
         const MatchSettings& settings,
@@ -6223,7 +6320,7 @@ namespace
             18,
             18,
             430,
-            136,
+            105,
             HUD_BG
         );
 
@@ -6231,7 +6328,7 @@ namespace
             18,
             18,
             430,
-            136,
+            105,
             JENG_RED
         );
 
@@ -6304,66 +6401,12 @@ namespace
             );
         }
 
-        if (IsTeamMode(settings))
-        {
-            DrawText(
-                TextFormat(
-                    "RED %d    BLUE %d    TARGET %d",
-                    TeamScore(combatants, 0),
-                    TeamScore(combatants, 1),
-                    settings.scoreLimit
-                ),
-                32,
-                89,
-                18,
-                RAYWHITE
-            );
-        }
-        else
-        {
-            DrawText(
-                TextFormat(
-                    "KILLS %d    DEATHS %d    DMG %d",
-                    player.kills,
-                    player.deaths,
-                    player.damageDealt
-                ),
-                32,
-                89,
-                18,
-                RAYWHITE
-            );
-        }
+        DrawText(
+            TextFormat("KILLS %d    DEATHS %d    DMG %d",
+                player.kills, player.deaths, player.damageDealt),
+            32, 89, 18, RAYWHITE);
 
-        if (IsTimedMode(settings))
-        {
-            std::string timeText =
-                "TIME  " +
-                FormatMatchTime(
-                    timeRemaining
-                );
-
-            DrawText(
-                timeText.c_str(),
-                32,
-                118,
-                18,
-                Color{180, 183, 195, 255}
-            );
-        }
-        else
-        {
-            DrawText(
-                TextFormat(
-                    "SCORE TO WIN  %d",
-                    settings.scoreLimit
-                ),
-                32,
-                118,
-                16,
-                Color{165, 168, 180, 255}
-            );
-        }
+        DrawTopScores(combatants, settings, timeRemaining);
 
         DrawRectangle(
             18,

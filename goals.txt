@@ -13,3 +13,14 @@
 12. REMOVE TIC TAC TOE and any other terminal implementation. 
 13. Create some type of sign-in/sign-up process. Store user information for when they sign back in w/ their username + password.
 14. Figure out databases, and create some type of database to store user information and connect it to the server.
+
+Tank-to-tank collision.
+Fix Arena invite acceptance from inside Arena.
+Arena UI cleanup + expanded/second map.
+Remove remaining terminal-game implementations.
+Create reusable responsive UI components and fix global clipping/overlap problems.
+Sign-up/login + server authentication.
+Database-backed users and saved preferences.
+Higher-resolution rendering/graphics pass.
+Games-tab pagination + client customization/font/theme system.
+Build the second real-time multiplayer game.

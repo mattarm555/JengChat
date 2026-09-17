@@ -42,6 +42,18 @@ namespace
         }
     }
 
+    float ToFloat(const string& value, float fallback = 0.0f)
+    {
+        try
+        {
+            return stof(value);
+        }
+        catch (...)
+        {
+            return fallback;
+        }
+    }
+
     GameView DetectChallengeGame(const string& text)
     {
         if (Contains(text, "Chess") || Contains(text, "CHESS"))
@@ -55,6 +67,9 @@ namespace
 
         if (Contains(text, "Roulette") || Contains(text, "ROULETTE"))
             return GameView::ROULETTE;
+
+        if (Contains(text, "Arena") || Contains(text, "ARENA"))
+            return GameView::ARENA;
 
         return GameView::HOME;
     }
@@ -72,6 +87,9 @@ namespace
 
         if (game == GameView::ROULETTE)
             return "ROULETTE INVITE";
+
+        if (game == GameView::ARENA)
+            return "JENG ARENA INVITE";
 
         if (Contains(message, "Tic-Tac-Toe"))
             return "TIC-TAC-TOE CHALLENGE";
@@ -735,6 +753,315 @@ namespace
         }
     }
 
+
+    ArenaLobbyPlayerClientState ParseArenaLobbyPlayer(
+        const string& encoded)
+    {
+        ArenaLobbyPlayerClientState player;
+        vector<string> fields = Split(encoded, '^');
+
+        // name^ready^colorIndex^team
+        if (fields.size() < 4)
+            return player;
+
+        player.name = fields[0];
+        player.ready = fields[1] == "1";
+        player.colorIndex = ToInt(fields[2], -1);
+        player.team = ToInt(fields[3], -1);
+        return player;
+    }
+
+
+    ArenaWorldPlayerClientState ParseArenaWorldPlayer(
+        const string& encoded)
+    {
+        ArenaWorldPlayerClientState player;
+        vector<string> fields = Split(encoded, '^');
+
+        // name^x^z^bodyYaw^aimYaw^colorIndex^team^health^alive^kills^deaths^damageDealt^damageTaken^respawn
+        if (fields.size() < 7)
+            return player;
+
+        player.name = fields[0];
+        player.x = ToFloat(fields[1]);
+        player.z = ToFloat(fields[2]);
+        player.bodyYaw = ToFloat(fields[3], 180.0f);
+        player.aimYaw = ToFloat(fields[4], 180.0f);
+        player.colorIndex = ToInt(fields[5], -1);
+        player.team = ToInt(fields[6], -1);
+
+        if (fields.size() >= 14)
+        {
+            player.health = ToInt(fields[7], 100);
+            player.alive = ToInt(fields[8], 1) != 0;
+            player.kills = ToInt(fields[9], 0);
+            player.deaths = ToInt(fields[10], 0);
+            player.damageDealt = ToInt(fields[11], 0);
+            player.damageTaken = ToInt(fields[12], 0);
+            player.respawnTimer = ToFloat(fields[13], 0.0f);
+        }
+
+        return player;
+    }
+
+
+    ArenaProjectileClientState ParseArenaProjectile(
+        const string& encoded)
+    {
+        ArenaProjectileClientState projectile;
+        vector<string> fields = Split(encoded, '^');
+
+        // x^y^z
+        if (fields.size() < 3)
+            return projectile;
+
+        projectile.x = ToFloat(fields[0], 0.0f);
+        projectile.y = ToFloat(fields[1], 1.10f);
+        projectile.z = ToFloat(fields[2], 0.0f);
+        return projectile;
+    }
+
+
+    ArenaMineClientState ParseArenaMine(
+        const string& encoded)
+    {
+        ArenaMineClientState mine;
+        vector<string> fields = Split(encoded, '^');
+
+        // x^z^colorIndex^team
+        if (fields.size() < 4)
+            return mine;
+
+        mine.x = ToFloat(fields[0], 0.0f);
+        mine.z = ToFloat(fields[1], 0.0f);
+        mine.colorIndex = ToInt(fields[2], -1);
+        mine.team = ToInt(fields[3], -1);
+        return mine;
+    }
+
+
+    void HandleArenaPacket(AppState& app, const NetMessage& msg)
+    {
+        ArenaClientState& arena = app.arena;
+
+        if (msg.type == "ARENA_CHALLENGE")
+        {
+            vector<string> fields = Split(msg.data);
+
+            // host|mode|maxPlayers|scoreLimit|timeLimit|currentPlayers
+            if (fields.size() >= 6)
+            {
+                app.pendingChallenge.active = true;
+                app.pendingChallenge.error.clear();
+                app.pendingChallenge.game = GameView::ARENA;
+                app.pendingChallenge.title = "JENG ARENA INVITE";
+
+                app.pendingChallenge.message =
+                    fields[0] +
+                    " invited you to JENG Arena - " +
+                    fields[1] +
+                    ", " +
+                    fields[5] +
+                    "/" +
+                    fields[2] +
+                    " players.";
+
+                arena.mode = fields[1];
+                arena.maxPlayers = ToInt(fields[2]);
+                arena.scoreLimit = ToInt(fields[3], 5);
+                arena.timeLimitSeconds = ToInt(fields[4], 180);
+                arena.status = "Arena invitation received.";
+
+                app.showHelpMenu = false;
+                app.commandPopup.open = false;
+            }
+
+            return;
+        }
+
+        if (msg.type == "ARENA_STATE")
+        {
+            vector<string> fields = Split(msg.data);
+
+            // phase|mode|maxPlayers|scoreLimit|timeLimit|host|status|
+            // playerCount|playerEncoded...
+            if (fields.size() < 8)
+                return;
+
+            arena.phase = fields[0];
+            arena.mode = fields[1];
+            arena.maxPlayers = ToInt(fields[2]);
+            arena.scoreLimit = ToInt(fields[3], 5);
+            arena.timeLimitSeconds = ToInt(fields[4], 180);
+            arena.hostName = fields[5];
+            arena.status = fields[6];
+
+            int playerCount = ToInt(fields[7]);
+            arena.players.clear();
+
+            for (int i = 0; i < playerCount; i++)
+            {
+                int fieldIndex = 8 + i;
+
+                if (fieldIndex >= (int)fields.size())
+                    break;
+
+                arena.players.push_back(
+                    ParseArenaLobbyPlayer(
+                        fields[fieldIndex]
+                    )
+                );
+            }
+
+            arena.active = true;
+            arena.startSignalReceived =
+                arena.phase == "STARTING" ||
+                arena.phase == "PLAYING";
+
+            if (
+                arena.phase != "PLAYING" &&
+                arena.phase != "POSTGAME"
+            )
+            {
+                arena.matchActive = false;
+                arena.worldPlayers.clear();
+                arena.worldProjectiles.clear();
+                arena.worldMines.clear();
+                arena.timeRemainingSeconds = 0.0f;
+            }
+
+            if (arena.phase == "POSTGAME")
+            {
+                arena.matchActive = false;
+                arena.startSignalReceived = false;
+            }
+
+            app.gameView = GameView::ARENA;
+            return;
+        }
+
+        if (msg.type == "ARENA_WORLD")
+        {
+            vector<string> fields = Split(msg.data);
+
+            // worldSequence|timeRemaining|playerCount|projectileCount|mineCount|playerEncoded...|projectileEncoded...|mineEncoded...
+            if (fields.size() < 5)
+                return;
+
+            arena.worldSequence = ToInt(
+                fields[0],
+                arena.worldSequence
+            );
+
+            arena.timeRemainingSeconds = ToFloat(
+                fields[1],
+                arena.timeRemainingSeconds
+            );
+
+            int playerCount = ToInt(fields[2]);
+            int projectileCount = ToInt(fields[3]);
+            int mineCount = ToInt(fields[4]);
+
+            arena.worldPlayers.clear();
+            arena.worldProjectiles.clear();
+            arena.worldMines.clear();
+
+            int fieldIndex = 5;
+
+            for (int i = 0; i < playerCount; i++)
+            {
+                if (fieldIndex >= (int)fields.size())
+                    break;
+
+                arena.worldPlayers.push_back(
+                    ParseArenaWorldPlayer(
+                        fields[fieldIndex]
+                    )
+                );
+
+                fieldIndex++;
+            }
+
+            for (int i = 0; i < projectileCount; i++)
+            {
+                if (fieldIndex >= (int)fields.size())
+                    break;
+
+                arena.worldProjectiles.push_back(
+                    ParseArenaProjectile(
+                        fields[fieldIndex]
+                    )
+                );
+
+                fieldIndex++;
+            }
+
+            for (int i = 0; i < mineCount; i++)
+            {
+                if (fieldIndex >= (int)fields.size())
+                    break;
+
+                arena.worldMines.push_back(
+                    ParseArenaMine(
+                        fields[fieldIndex]
+                    )
+                );
+
+                fieldIndex++;
+            }
+
+            arena.active = true;
+            arena.matchActive = !arena.worldPlayers.empty();
+            arena.phase = "PLAYING";
+            arena.startSignalReceived = true;
+            arena.status =
+                "Online combat synchronized.";
+
+            app.gameView = GameView::ARENA;
+            return;
+        }
+
+        if (msg.type == "ARENA_NOTICE")
+        {
+            arena.status = msg.data;
+            return;
+        }
+
+        if (msg.type == "ARENA_ERROR")
+        {
+            arena.status = msg.data;
+            app.gameView = GameView::ARENA;
+            return;
+        }
+
+        if (msg.type == "ARENA_START")
+        {
+            arena.phase = "STARTING";
+            arena.startSignalReceived = true;
+            arena.matchActive = false;
+            arena.status =
+                "Starting synchronized Arena match...";
+            app.gameView = GameView::ARENA;
+            return;
+        }
+
+        if (msg.type == "ARENA_END")
+        {
+            arena.status = msg.data;
+            arena.phase = "ENDED";
+            arena.active = false;
+            arena.startSignalReceived = false;
+            arena.matchActive = false;
+            arena.players.clear();
+            arena.worldPlayers.clear();
+            arena.worldProjectiles.clear();
+            arena.worldMines.clear();
+            arena.timeRemainingSeconds = 0.0f;
+            return;
+        }
+    }
+
+
     void HandlePokerPacket(AppState& app, const NetMessage& msg)
     {
         PokerClientState& poker = app.poker;
@@ -979,6 +1306,12 @@ void ProcessIncomingMessages(AppState& app)
             continue;
         }
 
+        if (msg.type.rfind("ARENA_", 0) == 0)
+        {
+            HandleArenaPacket(app, msg);
+            continue;
+        }
+
         if (msg.type == "CHAT")
         {
             size_t split = msg.data.find('|');
@@ -1154,6 +1487,12 @@ void ProcessIncomingMessages(AppState& app)
             if (app.gameView == GameView::POKER)
             {
                 app.poker.status = msg.data;
+                continue;
+            }
+
+            if (app.gameView == GameView::ARENA)
+            {
+                app.arena.status = msg.data;
                 continue;
             }
 

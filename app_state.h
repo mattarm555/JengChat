@@ -17,7 +17,8 @@ enum class GameView
     CHESS,
     BLACKJACK,
     POKER,
-    ROULETTE
+    ROULETTE,
+    ARENA
 };
 
 struct ChatLine
@@ -234,6 +235,73 @@ struct RouletteClientState
     float resultHoldDuration = 1.8f;
 };
 
+
+struct ArenaLobbyPlayerClientState
+{
+    std::string name;
+    bool ready = false;
+    int colorIndex = -1;
+    int team = -1;
+};
+
+struct ArenaWorldPlayerClientState
+{
+    std::string name;
+    float x = 0.0f;
+    float z = 0.0f;
+    float bodyYaw = 180.0f;
+    float aimYaw = 180.0f;
+    int colorIndex = -1;
+    int team = -1;
+    int health = 100;
+    bool alive = true;
+    int kills = 0;
+    int deaths = 0;
+    int damageDealt = 0;
+    int damageTaken = 0;
+    float respawnTimer = 0.0f;
+};
+
+struct ArenaProjectileClientState
+{
+    float x = 0.0f;
+    float y = 1.10f;
+    float z = 0.0f;
+};
+
+struct ArenaMineClientState
+{
+    float x = 0.0f;
+    float z = 0.0f;
+    int colorIndex = -1;
+    int team = -1;
+};
+
+struct ArenaClientState
+{
+    bool active = false;
+    bool startSignalReceived = false;
+    bool matchActive = false;
+
+    std::string phase = "WAITING"; // WAITING, LOBBY, STARTING, PLAYING, POSTGAME, ENDED
+    std::string hostName;
+    std::string mode = "SCORE_FFA";
+    std::string status = "Create an Arena lobby to begin.";
+
+    int maxPlayers = 0;
+    int scoreLimit = 5;
+    int timeLimitSeconds = 180;
+
+    // Incremented every time the server publishes an Arena world snapshot.
+    int worldSequence = 0;
+    float timeRemainingSeconds = 0.0f;
+
+    std::vector<ArenaLobbyPlayerClientState> players;
+    std::vector<ArenaWorldPlayerClientState> worldPlayers;
+    std::vector<ArenaProjectileClientState> worldProjectiles;
+    std::vector<ArenaMineClientState> worldMines;
+};
+
 struct AppState
 {
     AppScreen screen = AppScreen::LOGIN;
@@ -253,6 +321,7 @@ struct AppState
     ChessClientState chess;
     BlackjackClientState blackjack;
     RouletteClientState roulette;
+    ArenaClientState arena;
 
     // Useful later when the server sends a generic "accepted your challenge"
     // message after this client initiated a challenge.

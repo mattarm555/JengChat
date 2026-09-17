@@ -13,6 +13,9 @@ build/
 # Temporary/vendor build files
 vendor/
 
+# Server repo
+server/
+
 # OS files
 .DS_Store
 Thumbs.db

@@ -89,7 +89,7 @@ namespace
 
         const float gap = 16.0f;
         const float cardWidth = (bounds.width - 44 - gap) / 2.0f;
-        const float cardHeight = 180.0f;
+        const float cardHeight = 145.0f;
         const float startX = bounds.x + 22;
         const float startY = bounds.y + 92;
 
@@ -119,6 +119,13 @@ namespace
             startY + cardHeight + gap,
             cardWidth,
             cardHeight
+        };
+
+        Rectangle arenaCard = {
+            startX,
+            startY + (cardHeight + gap) * 2.0f,
+            cardWidth * 2.0f + gap,
+            130.0f
         };
 
         DrawGameCard(
@@ -160,6 +167,16 @@ namespace
             interactionsBlocked,
             JENG_RED
         );
+
+        DrawGameCard(
+            app,
+            arenaCard,
+            "JENG ARENA",
+            "3D tank combat // FFA // Duels // Teams",
+            GameView::ARENA,
+            interactionsBlocked,
+            JENG_YELLOW
+        );
     }
 }
 
@@ -188,6 +205,16 @@ void DrawGameArea(AppState& app, Rectangle bounds, bool interactionsBlocked)
 
         case GameView::ROULETTE:
             DrawRoulettePanel(app, bounds, interactionsBlocked);
+            break;
+
+        case GameView::ARENA:
+            DrawText(
+                "Launching JENG ARENA...",
+                (int)bounds.x + 24,
+                (int)bounds.y + 24,
+                22,
+                JENG_YELLOW
+            );
             break;
     }
 }

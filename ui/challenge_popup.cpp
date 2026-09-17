@@ -4,6 +4,7 @@
 #include "../networking.h"
 #include "../theme.h"
 #include "ui_common.h"
+#include <algorithm>
 
 void DrawPendingChallengePopup(AppState& app)
 {
@@ -21,7 +22,12 @@ void DrawPendingChallengePopup(AppState& app)
     );
 
     const float panelWidth = 620.0f;
-    const float panelHeight = 285.0f;
+    const auto messageLines = WrapUIMessage(challenge.message, 17, (int)panelWidth - 60, 8);
+    const auto errorLines = WrapUIMessage(challenge.error, 14, (int)panelWidth - 60, 3);
+    const float messageHeight = std::max(1, (int)messageLines.size()) * 23.0f;
+    const float errorHeight = errorLines.empty() ? 0.0f : 12.0f + errorLines.size() * 19.0f;
+    const float buttonOffset = std::max(188.0f, 118.0f + messageHeight + 28.0f);
+    const float panelHeight = buttonOffset + 52.0f + errorHeight + 28.0f;
 
     Rectangle panel = {
         WINDOW_WIDTH / 2.0f - panelWidth / 2.0f,
@@ -33,13 +39,8 @@ void DrawPendingChallengePopup(AppState& app)
     DrawRectangleRounded(panel, 0.04f, 10, PANEL);
     DrawRectangleRoundedLinesEx(panel, 0.04f, 10, 2.0f, JENG_YELLOW);
 
-    DrawText(
-        challenge.title.c_str(),
-        (int)panel.x + 30,
-        (int)panel.y + 28,
-        29,
-        JENG_RED
-    );
+    DrawFittedText(challenge.title,
+        {panel.x + 30, panel.y + 28, panel.width - 60, 34}, 29, JENG_RED);
 
     DrawText(
         "You received a game challenge.",
@@ -49,24 +50,18 @@ void DrawPendingChallengePopup(AppState& app)
         TEXT_MUTED
     );
 
-    DrawText(
-        challenge.message.c_str(),
-        (int)panel.x + 30,
-        (int)panel.y + 118,
-        17,
-        TEXT_MAIN
-    );
+    DrawUILines(messageLines, panel.x + 30, panel.y + 118, 17, 23, TEXT_MAIN);
 
     Rectangle acceptButton = {
         panel.x + 70,
-        panel.y + 188,
+        panel.y + buttonOffset,
         210,
         52
     };
 
     Rectangle declineButton = {
         panel.x + panel.width - 280,
-        panel.y + 188,
+        panel.y + buttonOffset,
         210,
         52
     };
@@ -92,16 +87,8 @@ void DrawPendingChallengePopup(AppState& app)
 
     DrawCenteredText("DECLINE", declineButton, 20, WHITE);
 
-    if (!challenge.error.empty())
-    {
-        DrawText(
-            challenge.error.c_str(),
-            (int)panel.x + 30,
-            (int)panel.y + (int)panel.height - 23,
-            14,
-            ERROR_COLOR
-        );
-    }
+    DrawUILines(errorLines, panel.x + 30, panel.y + buttonOffset + 64,
+        14, 19, ERROR_COLOR);
 
     if (
         acceptHover &&

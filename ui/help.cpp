@@ -5,7 +5,7 @@
 #include "../theme.h"
 
 #include "appearance.h"
-#include "command_popup.h"
+#include "players.h"
 #include "ui_common.h"
 
 using namespace std;
@@ -228,7 +228,7 @@ void DrawHelpMenu(AppState& app)
         cardHeight
     };
 
-    Rectangle ticTacToe = {
+    Rectangle arena = {
         startX,
         startY + (cardHeight + gapY) * 3,
         cardWidth,
@@ -249,7 +249,7 @@ void DrawHelpMenu(AppState& app)
     bool blackjackHover = IsMouseInside(blackjack);
     bool pokerHover = IsMouseInside(poker);
     bool rouletteHover = IsMouseInside(roulette);
-    bool tttHover = IsMouseInside(ticTacToe);
+    bool arenaHover = IsMouseInside(arena);
     bool appearanceHover = IsMouseInside(controlsInfo);
 
 
@@ -302,11 +302,11 @@ void DrawHelpMenu(AppState& app)
     );
 
     DrawMenuCard(
-        ticTacToe,
-        "TIC-TAC-TOE",
-        "Challenge a player",
+        arena,
+        "JENG ARENA",
+        "Open tank combat",
         Color{190, 150, 255, 255},
-        tttHover
+        arenaHover
     );
 
 
@@ -325,14 +325,7 @@ void DrawHelpMenu(AppState& app)
 
     if (CardClicked(onlineUsers))
     {
-        if (!NetSendLine("/users"))
-        {
-            AddChatLine(
-                app.history,
-                "[!] " + NetLastError(),
-                ERROR_COLOR
-            );
-        }
+        OpenOnlineUsers(app);
 
         CloseHelp(app);
         return;
@@ -379,15 +372,9 @@ void DrawHelpMenu(AppState& app)
     }
 
 
-    if (CardClicked(ticTacToe))
+    if (CardClicked(arena))
     {
-        OpenCommandPrompt(
-            app.commandPopup,
-            "TIC-TAC-TOE",
-            "Who do you want to challenge?",
-            "/ttt",
-            {"Opponent username"}
-        );
+        app.gameView = GameView::ARENA;
 
         CloseHelp(app);
         return;
@@ -407,7 +394,7 @@ void DrawHelpMenu(AppState& app)
     // ========================================================
 
     DrawText(
-        "In-game controls such as Move, Hit, Stand, Bet and Resign will live inside each game.",
+        "Choose a game to play, or open Appearance to make the client yours.",
         (int)panel.x + 31,
         (int)panel.y + (int)panel.height - 29,
         13,

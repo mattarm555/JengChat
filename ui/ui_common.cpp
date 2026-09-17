@@ -67,10 +67,12 @@ void AddChatLine(vector<ChatLine>& history, const string& text, Color color)
 
 void DrawCenteredText(const char* text, Rectangle rect, int fontSize, Color color)
 {
-    int width = MeasureText(text, fontSize);
-    int x = (int)(rect.x + rect.width / 2.0f - width / 2.0f);
-    int y = (int)(rect.y + rect.height / 2.0f - fontSize / 2.0f);
-    DrawText(text, x, y, fontSize, color);
+    const int size = std::max(1, std::min(fontSize, (int)rect.height - 4));
+    const std::string fitted = FitUIText(text, size, std::max(0, (int)rect.width - 16));
+    int width = MeasureText(fitted.c_str(), size);
+    int x = (int)(rect.x + (rect.width - width) / 2.0f);
+    int y = (int)(rect.y + (rect.height - size) / 2.0f);
+    DrawText(fitted.c_str(), x, y, size, color);
 }
 
 bool DrawButton(Rectangle rect,
@@ -103,32 +105,8 @@ vector<WrappedLine> BuildWrappedChatLines(
 
     for (const ChatLine& chat : history)
     {
-        istringstream words(chat.text);
-        string word;
-        string current;
-
-        while (words >> word)
-        {
-            string candidate = current.empty()
-                ? word
-                : current + " " + word;
-
-            if (
-                !current.empty() &&
-                MeasureText(candidate.c_str(), fontSize) > maxPixelWidth
-            )
-            {
-                result.push_back({current, chat.color});
-                current = word;
-            }
-            else
-            {
-                current = candidate;
-            }
-        }
-
-        if (!current.empty())
-            result.push_back({current, chat.color});
+        for (const std::string& line : WrapUIText(chat.text, fontSize, maxPixelWidth))
+            result.push_back({line, chat.color});
 
         // Small visual separation between chat events.
         result.push_back({"", chat.color});
@@ -138,4 +116,107 @@ vector<WrappedLine> BuildWrappedChatLines(
         result.pop_back();
 
     return result;
+}
+
+std::string FitUIText(const std::string& text, int fontSize, int maxWidth)
+{
+    if (maxWidth <= 0) return "";
+    if (MeasureText(text.c_str(), fontSize) <= maxWidth) return text;
+    const std::string suffix = "...";
+    if (MeasureText(suffix.c_str(), fontSize) > maxWidth) return "";
+    std::string result = text;
+    while (!result.empty() && MeasureText((result + suffix).c_str(), fontSize) > maxWidth)
+    {
+        // Remove a complete UTF-8 codepoint.
+        size_t pos = result.size() - 1;
+        while (pos > 0 && ((unsigned char)result[pos] & 0xc0) == 0x80) --pos;
+        result.resize(pos);
+    }
+    return result + suffix;
+}
+
+std::vector<std::string> WrapUIText(const std::string& text, int fontSize, int maxWidth)
+{
+    std::vector<std::string> lines;
+    if (maxWidth <= 0) return lines;
+    std::istringstream paragraphs(text);
+    std::string paragraph;
+    while (std::getline(paragraphs, paragraph))
+    {
+        std::istringstream words(paragraph);
+        std::string word, line;
+        while (words >> word)
+        {
+            const std::string candidate = line.empty() ? word : line + " " + word;
+            if (!line.empty() && MeasureText(candidate.c_str(), fontSize) > maxWidth)
+            {
+                lines.push_back(line);
+                line.clear();
+            }
+            if (!line.empty()) line += " ";
+            for (size_t pos = 0; pos < word.size();)
+            {
+                size_t next = pos + 1;
+                while (next < word.size() && ((unsigned char)word[next] & 0xc0) == 0x80) ++next;
+                std::string glyph = word.substr(pos, next - pos);
+                if (!line.empty() && MeasureText((line + glyph).c_str(), fontSize) > maxWidth)
+                {
+                    lines.push_back(line);
+                    line.clear();
+                }
+                line += glyph;
+                pos = next;
+            }
+        }
+        lines.push_back(line);
+    }
+    return lines;
+}
+
+Rectangle UIGridCell(Rectangle bounds, int columns, int rows, int index, float gap)
+{
+    columns = std::max(1, columns);
+    rows = std::max(1, rows);
+    float width = std::max(0.0f, (bounds.width - gap * (columns - 1)) / columns);
+    float height = std::max(0.0f, (bounds.height - gap * (rows - 1)) / rows);
+    return {bounds.x + (index % columns) * (width + gap),
+        bounds.y + (index / columns) * (height + gap), width, height};
+}
+
+void DrawFittedText(const std::string& text, Rectangle bounds, int fontSize, Color color)
+{
+    const int size = std::max(1, std::min(fontSize, (int)bounds.height));
+    const std::string fitted = FitUIText(text, size, (int)bounds.width);
+    DrawText(fitted.c_str(), (int)bounds.x, (int)bounds.y, size, color);
+}
+
+bool DrawActionButton(Rectangle bounds, const char* text, bool blocked, Color accent)
+{
+    bool hover = !blocked && IsMouseInside(bounds);
+    DrawRectangleRounded(bounds, 0.12f, 8, hover ? accent : PANEL_LIGHT);
+    DrawCenteredText(text, bounds, 16, hover ? BG : TEXT_MAIN);
+    return hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+}
+
+std::vector<std::string> WrapUIMessage(const std::string& text, int fontSize,
+    int maxWidth, int maxLines)
+{
+    if (text.empty() || maxLines <= 0) return {};
+    auto lines = WrapUIText(text, fontSize, maxWidth);
+    if ((int)lines.size() > maxLines)
+    {
+        lines.resize(maxLines);
+        lines.back() = FitUIText(lines.back() + "...", fontSize, maxWidth);
+    }
+    return lines;
+}
+
+void DrawUILines(const std::vector<std::string>& lines, float x, float y,
+    int fontSize, int lineHeight, Color color)
+{
+    for (const auto& line : lines)
+    {
+        DrawText(line.c_str(), (int)x, (int)y, fontSize, color);
+        y += lineHeight;
+    }
 }

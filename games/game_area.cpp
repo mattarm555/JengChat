@@ -36,21 +36,8 @@ namespace
             hover ? accent : PANEL_LIGHT
         );
 
-        DrawText(
-            title,
-            (int)card.x + 20,
-            (int)card.y + 22,
-            24,
-            accent
-        );
-
-        DrawText(
-            subtitle,
-            (int)card.x + 20,
-            (int)card.y + 62,
-            14,
-            TEXT_MUTED
-        );
+        DrawFittedText(title, {card.x + 18, card.y + 18, card.width - 36, 26}, 24, accent);
+        DrawFittedText(subtitle, {card.x + 18, card.y + 54, card.width - 36, 18}, 14, TEXT_MUTED);
 
         DrawText(
             "OPEN >",
@@ -87,96 +74,20 @@ namespace
             TEXT_MUTED
         );
 
-        const float gap = 16.0f;
-        const float cardWidth = (bounds.width - 44 - gap) / 2.0f;
-        const float cardHeight = 145.0f;
-        const float startX = bounds.x + 22;
-        const float startY = bounds.y + 92;
-
-        Rectangle chessCard = {
-            startX,
-            startY,
-            cardWidth,
-            cardHeight
+        const Rectangle grid = {bounds.x + 22, bounds.y + 88,
+            bounds.width - 44, bounds.height - 110};
+        struct Entry { const char* title; const char* description; GameView view; Color color; };
+        const Entry entries[] = {
+            {"CHESS", "Challenge a friend on the board", GameView::CHESS, JENG_YELLOW},
+            {"BLACKJACK", "Take a seat at the table", GameView::BLACKJACK, SUCCESS},
+            {"POKER", "Heads-up Texas Hold'em", GameView::POKER, Color{130, 180, 255, 255}},
+            {"ROULETTE", "Place your chips and spin", GameView::ROULETTE, JENG_RED},
+            {"JENG ARENA", "Real-time tank combat", GameView::ARENA, JENG_YELLOW}
         };
+        for (int i = 0; i < 5; ++i)
+            DrawGameCard(app, UIGridCell(grid, 2, 3, i, 12), entries[i].title,
+                entries[i].description, entries[i].view, interactionsBlocked, entries[i].color);
 
-        Rectangle blackjackCard = {
-            startX + cardWidth + gap,
-            startY,
-            cardWidth,
-            cardHeight
-        };
-
-        Rectangle pokerCard = {
-            startX,
-            startY + cardHeight + gap,
-            cardWidth,
-            cardHeight
-        };
-
-        Rectangle rouletteCard = {
-            startX + cardWidth + gap,
-            startY + cardHeight + gap,
-            cardWidth,
-            cardHeight
-        };
-
-        Rectangle arenaCard = {
-            startX,
-            startY + (cardHeight + gap) * 2.0f,
-            cardWidth * 2.0f + gap,
-            130.0f
-        };
-
-        DrawGameCard(
-            app,
-            chessCard,
-            "CHESS",
-            "Mouse-driven board",
-            GameView::CHESS,
-            interactionsBlocked,
-            JENG_YELLOW
-        );
-
-        DrawGameCard(
-            app,
-            blackjackCard,
-            "BLACKJACK",
-            "PNG cards + dealing",
-            GameView::BLACKJACK,
-            interactionsBlocked,
-            SUCCESS
-        );
-
-        DrawGameCard(
-            app,
-            pokerCard,
-            "POKER",
-            "Private hands + table",
-            GameView::POKER,
-            interactionsBlocked,
-            Color{130, 180, 255, 255}
-        );
-
-        DrawGameCard(
-            app,
-            rouletteCard,
-            "ROULETTE",
-            "Animated wheel + chips",
-            GameView::ROULETTE,
-            interactionsBlocked,
-            JENG_RED
-        );
-
-        DrawGameCard(
-            app,
-            arenaCard,
-            "JENG ARENA",
-            "3D tank combat // FFA // Duels // Teams",
-            GameView::ARENA,
-            interactionsBlocked,
-            JENG_YELLOW
-        );
     }
 }
 

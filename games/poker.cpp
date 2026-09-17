@@ -1,3 +1,4 @@
+#include "../ui/players.h"
 #include "poker.h"
 
 #include "cards/card_renderer.h"
@@ -479,15 +480,7 @@ namespace
             )
         )
         {
-            OpenCommandPrompt(
-                app.commandPopup,
-                "POKER INVITE",
-                "Invite a player to this Poker table.",
-                "/poker",
-                {
-                    "Opponent username"
-                }
-            );
+            OpenPlayerInvite(app, GameView::POKER);
         }
 
         if (

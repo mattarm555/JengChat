@@ -1,3 +1,5 @@
+#include "../ui/players.h"
+#include "../ui/ui_common.h"
 #include "raylib.h"
 #include "arena.h"
 #include "../networking.h"
@@ -53,8 +55,11 @@ namespace
         };
     }
 
+    bool arenaLobbyInputBlocked = false;
+
     Vector2 GetArenaMousePosition()
     {
+        if (arenaLobbyInputBlocked) return {-10000.0f, -10000.0f};
         Vector2 mouse = GetMousePosition();
         Rectangle viewport = GetArenaViewport();
 
@@ -5841,159 +5846,11 @@ namespace
             localIndex >= 0 &&
             lobby.players[localIndex].ready;
 
-        static std::string inviteInput;
-        static bool inviteInputActive = false;
-
         if (isHost && lobby.phase == "LOBBY")
         {
-            DrawText(
-                "INVITE PLAYER",
-                765,
-                253,
-                16,
-                JENG_RED
-            );
-
-            Rectangle inviteBox = {
-                765.0f,
-                285.0f,
-                275.0f,
-                43.0f
-            };
-
-            Rectangle inviteButton = {
-                1055.0f,
-                285.0f,
-                140.0f,
-                43.0f
-            };
-
-            Vector2 mouse =
-                GetArenaMousePosition();
-
-            if (
-                IsMouseButtonPressed(
-                    MOUSE_BUTTON_LEFT
-                )
-            )
-            {
-                inviteInputActive =
-                    CheckCollisionPointRec(
-                        mouse,
-                        inviteBox
-                    );
-            }
-
-            DrawRectangleRounded(
-                inviteBox,
-                0.12f,
-                8,
-                Color{31, 33, 40, 255}
-            );
-
-            DrawRectangleRoundedLinesEx(
-                inviteBox,
-                0.12f,
-                8,
-                inviteInputActive
-                    ? 2.0f
-                    : 1.0f,
-                inviteInputActive
-                    ? JENG_YELLOW
-                    : Color{80, 83, 94, 255}
-            );
-
-            if (inviteInput.empty())
-            {
-                DrawText(
-                    "username...",
-                    780,
-                    297,
-                    17,
-                    Color{125, 129, 143, 255}
-                );
-            }
-            else
-            {
-                DrawText(
-                    inviteInput.c_str(),
-                    780,
-                    297,
-                    17,
-                    RAYWHITE
-                );
-            }
-
-            if (inviteInputActive)
-            {
-                int key =
-                    GetCharPressed();
-
-                while (key > 0)
-                {
-                    if (
-                        key >= 32 &&
-                        key <= 125 &&
-                        inviteInput.size() < 16
-                    )
-                    {
-                        char c =
-                            (char)key;
-
-                        if (
-                            std::isalnum(
-                                (unsigned char)c
-                            ) ||
-                            c == '_' ||
-                            c == '-'
-                        )
-                        {
-                            inviteInput += c;
-                        }
-                    }
-
-                    key =
-                        GetCharPressed();
-                }
-
-                if (
-                    IsKeyPressed(
-                        KEY_BACKSPACE
-                    ) &&
-                    !inviteInput.empty()
-                )
-                {
-                    inviteInput.pop_back();
-                }
-            }
-
-            if (
-                MenuButton(
-                    inviteButton,
-                    "INVITE"
-                ) &&
-                !inviteInput.empty()
-            )
-            {
-                if (
-                    NetSendLine(
-                        "ARENA_INVITE|" +
-                        inviteInput
-                    )
-                )
-                {
-                    lobby.status =
-                        "Invitation sent to " +
-                        inviteInput +
-                        ".";
-                    inviteInput.clear();
-                }
-                else
-                {
-                    lobby.status =
-                        NetLastError();
-                }
-            }
+            DrawText("INVITE PLAYERS", 765, 253, 16, JENG_RED);
+            if (MenuButton({765.0f, 285.0f, 430.0f, 43.0f}, "INVITE PLAYER"))
+                OpenPlayerInvite(app, GameView::ARENA);
         }
         else
         {
@@ -8062,6 +7919,7 @@ void ArenaUpdateAndRender(
         app.arena.phase == "PLAYING"
     )
     {
+        app.showOnlineUsers = false;
         UpdateOnlineArenaMatch(
             app,
             dt
@@ -8074,6 +7932,7 @@ void ArenaUpdateAndRender(
         app.arena.phase == "POSTGAME"
     )
     {
+        app.showOnlineUsers = false;
         DrawOnlinePostGameScreen(app, dt);
         return;
     }
@@ -8093,13 +7952,17 @@ void ArenaUpdateAndRender(
             Color{11, 12, 16, 255}
         );
 
-        DrawArenaLobbyScreen(
-            app
-        );
+        arenaLobbyInputBlocked = app.showOnlineUsers || app.pendingChallenge.active;
+        DrawArenaLobbyScreen(app);
+        arenaLobbyInputBlocked = false;
 
-        DrawArenaIncomingInvite(
-            app
-        );
+        if (app.showOnlineUsers && !app.pendingChallenge.active)
+        {
+            Rectangle viewport = GetArenaViewport();
+            SetUITransform(viewport.width / SCREEN_WIDTH, viewport.x, viewport.y);
+            DrawOnlineUsers(app, SCREEN_WIDTH, SCREEN_HEIGHT);
+        }
+        DrawArenaIncomingInvite(app);
 
         EndTextureMode();
         return;
@@ -8687,6 +8550,12 @@ void ArenaDrawToWindow()
 
 void ArenaHandleEscape(AppState& app)
 {
+    if (app.showOnlineUsers)
+    {
+        app.showOnlineUsers = false;
+        return;
+    }
+
 
     if (!arenaInitialized)
     {

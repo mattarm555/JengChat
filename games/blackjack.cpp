@@ -1,3 +1,4 @@
+#include "../ui/players.h"
 #include "blackjack.h"
 
 #include "cards/card_renderer.h"
@@ -767,13 +768,7 @@ void DrawBlackjackPanel(
             )
         )
         {
-            OpenCommandPrompt(
-                app.commandPopup,
-                "BLACKJACK",
-                "Invite players to a Blackjack match.",
-                "/blackjack",
-                {"Player username"}
-            );
+            OpenPlayerInvite(app, GameView::BLACKJACK);
         }
 
         if (

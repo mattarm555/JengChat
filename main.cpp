@@ -14,6 +14,7 @@
 #include "ui/chat.h"
 #include "ui/command_popup.h"
 #include "ui/header.h"
+#include "ui/players.h"
 #include "ui/help.h"
 #include "ui/login.h"
 #include "ui/ui_common.h"
@@ -33,6 +34,7 @@ namespace
     bool HasModalOpen(const AppState& app)
 {
     return
+        app.showOnlineUsers ||
         app.showHelpMenu ||
         app.commandPopup.open ||
         app.pendingChallenge.active ||
@@ -65,6 +67,11 @@ namespace
 
         DrawChatPanel(app, chatPanel, blocked);
         DrawGameArea(app, gamePanel, blocked);
+
+        if (app.showOnlineUsers && !app.pendingChallenge.active &&
+            !app.showHelpMenu && !app.commandPopup.open &&
+            !IsAppearanceSettingsOpen() && !IsAudioSettingsOpen())
+            DrawOnlineUsers(app);
 
         // Modal UI is always drawn last so it sits over the entire app.
         if (app.showHelpMenu)
@@ -175,6 +182,10 @@ int main()
                     ToggleFullscreen();
                 else
                     ArenaHandleEscape(app);
+            }
+            else if (app.showOnlineUsers)
+            {
+                app.showOnlineUsers = false;
             }
             else if (IsAudioSettingsOpen())
             {

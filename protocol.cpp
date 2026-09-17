@@ -74,7 +74,7 @@ namespace
         return GameView::HOME;
     }
 
-    string ChallengeTitle(GameView game, const string& message)
+    string ChallengeTitle(GameView game)
     {
         if (game == GameView::CHESS)
             return "CHESS CHALLENGE";
@@ -90,9 +90,6 @@ namespace
 
         if (game == GameView::ARENA)
             return "JENG ARENA INVITE";
-
-        if (Contains(message, "Tic-Tac-Toe"))
-            return "TIC-TAC-TOE CHALLENGE";
 
         return "GAME CHALLENGE";
     }
@@ -1312,6 +1309,18 @@ void ProcessIncomingMessages(AppState& app)
             continue;
         }
 
+        if (msg.type == "USERS_LIST")
+        {
+            app.onlineUsers.clear();
+            std::istringstream roster(msg.data);
+            std::string name;
+            while (std::getline(roster, name, '|'))
+                if (!name.empty()) app.onlineUsers.push_back(name);
+            std::sort(app.onlineUsers.begin(), app.onlineUsers.end());
+            app.onlineUsersStatus = "";
+            continue;
+        }
+
         if (msg.type == "CHAT")
         {
             size_t split = msg.data.find('|');
@@ -1365,8 +1374,7 @@ void ProcessIncomingMessages(AppState& app)
                 app.pendingChallenge.message = msg.data;
                 app.pendingChallenge.game = DetectChallengeGame(msg.data);
                 app.pendingChallenge.title = ChallengeTitle(
-                    app.pendingChallenge.game,
-                    msg.data
+                    app.pendingChallenge.game
                 );
 
                 app.showHelpMenu = false;

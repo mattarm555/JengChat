@@ -1,93 +1,28 @@
 #include "header.h"
-
 #include "../config.h"
 #include "../networking.h"
 #include "../theme.h"
 #include "ui_common.h"
 #include "audio_settings.h"
+#include "appearance.h"
+#include "players.h"
 
-#include <string>
-
-using namespace std;
-
-void DrawHeader(AppState& app, bool interactionsBlocked)
+void DrawHeader(AppState& app, bool blocked)
 {
     DrawRectangle(0, 0, WINDOW_WIDTH, 70, PANEL);
-
-    DrawText("JENG CHAT", 28, 19, 30, JENG_RED);
-
-    Rectangle helpButton = {205, 15, 90, 40};
-    Rectangle audioButton = {305, 15, 90, 40};
-
-    bool helpHover =
-        !interactionsBlocked &&
-        IsMouseInside(helpButton);
-
-    bool audioHover =
-        !interactionsBlocked &&
-        IsMouseInside(audioButton);
-
-    DrawRectangleRounded(
-        helpButton,
-        0.12f,
-        8,
-        helpHover ? JENG_RED : PANEL_LIGHT
-    );
-
-    DrawCenteredText(
-        "HELP",
-        helpButton,
-        17,
-        TEXT_MAIN
-    );
-
-    DrawRectangleRounded(
-        audioButton,
-        0.12f,
-        8,
-        audioHover ? JENG_YELLOW : PANEL_LIGHT
-    );
-
-    DrawCenteredText(
-        "AUDIO",
-        audioButton,
-        16,
-        audioHover ? BG : TEXT_MAIN
-    );
-
-    if (
-        helpHover &&
-        IsMouseButtonPressed(MOUSE_BUTTON_LEFT)
-    )
-    {
-        app.showHelpMenu = true;
-    }
-
-    if (
-        audioHover &&
-        IsMouseButtonPressed(MOUSE_BUTTON_LEFT)
-    )
-    {
+    DrawFittedText("JENG CHAT", {24, 21, 175, 30}, 28, JENG_RED);
+    if (DrawActionButton({205, 16, 94, 38}, "GAMES", blocked, JENG_YELLOW))
+        app.gameView = GameView::HOME;
+    if (DrawActionButton({307, 16, 94, 38}, "PLAYERS", blocked, JENG_YELLOW))
+        OpenOnlineUsers(app);
+    if (DrawActionButton({409, 16, 94, 38}, "STYLE", blocked, JENG_RED))
+        OpenAppearanceSettings();
+    if (DrawActionButton({511, 16, 94, 38}, "AUDIO", blocked, JENG_YELLOW))
         OpenAudioSettings();
-    }
-
-    string userText = "@" + app.username;
-    DrawText(
-        userText.c_str(),
-        415,
-        25,
-        17,
-        TEXT_MUTED
-    );
-
-    Color statusColor = NetIsConnected() ? SUCCESS : ERROR_COLOR;
-
-    DrawCircle(WINDOW_WIDTH - 165, 35, 7, statusColor);
-    DrawText(
-        NetIsConnected() ? "CONNECTED" : "OFFLINE",
-        WINDOW_WIDTH - 145,
-        25,
-        18,
-        statusColor
-    );
+    if (DrawActionButton({613, 16, 94, 38}, "HELP", blocked, JENG_RED))
+        app.showHelpMenu = true;
+    DrawFittedText("@" + app.username, {730, 26, 260, 20}, 17, TEXT_MUTED);
+    Color status = NetIsConnected() ? SUCCESS : ERROR_COLOR;
+    DrawCircle(WINDOW_WIDTH - 165, 35, 7, status);
+    DrawText(NetIsConnected() ? "CONNECTED" : "OFFLINE", WINDOW_WIDTH - 145, 25, 18, status);
 }

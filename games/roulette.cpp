@@ -1,3 +1,4 @@
+#include "../ui/players.h"
 #include "roulette.h"
 
 #include "../networking.h"
@@ -1021,13 +1022,7 @@ void DrawRoulettePanel(
             )
         )
         {
-            OpenCommandPrompt(
-                app.commandPopup,
-                "ROULETTE INVITE",
-                "Invite a player to your Roulette table.",
-                "/roulette",
-                {"Player username"}
-            );
+            OpenPlayerInvite(app, GameView::ROULETTE);
         }
 
         if (

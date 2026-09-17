@@ -1,3 +1,4 @@
+#include "../ui/players.h"
 #include "chess.h"
 #include "chess_pieces.h"
 
@@ -573,13 +574,7 @@ void DrawChessPanel(
             )
         )
         {
-            OpenCommandPrompt(
-                app.commandPopup,
-                "CHESS",
-                "Who do you want to challenge?",
-                "/chess",
-                {"Opponent username"}
-            );
+            OpenPlayerInvite(app, GameView::CHESS);
         }
     }
     else

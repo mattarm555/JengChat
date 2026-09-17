@@ -304,6 +304,14 @@ struct ArenaClientState
 
 struct AppState
 {
+    bool showOnlineUsers = false;
+    GameView playerInviteGame = GameView::HOME;
+    std::string playerSearch;
+    bool playerSearchFocused = true;
+    std::vector<std::string> onlineUsers;
+    std::string onlineUsersStatus;
+    int onlineUsersScroll = 0;
+
     AppScreen screen = AppScreen::LOGIN;
     GameView gameView = GameView::HOME;
 

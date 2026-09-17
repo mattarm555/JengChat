@@ -692,6 +692,100 @@ namespace
             combatant.position.z = next.z;
     }
 
+    bool OnlinePositionBlockedByTank(
+        Vector3 position,
+        int selfIndex,
+        const std::vector<Combatant>& combatants)
+    {
+        const float minimumDistance =
+            TANK_RADIUS * 2.0f;
+
+        const float minimumDistanceSquared =
+            minimumDistance * minimumDistance;
+
+        for (
+            int i = 0;
+            i < (int)combatants.size();
+            i++
+        )
+        {
+            if (
+                i == selfIndex ||
+                !combatants[i].alive
+            )
+            {
+                continue;
+            }
+
+            float dx =
+                position.x - combatants[i].position.x;
+
+            float dz =
+                position.z - combatants[i].position.z;
+
+            if (
+                dx * dx + dz * dz <
+                minimumDistanceSquared
+            )
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    void MoveOnlineCombatant(
+        Combatant& combatant,
+        int selfIndex,
+        Vector3 movement,
+        float dt,
+        float speed,
+        const std::vector<Obstacle>& obstacles,
+        const std::vector<Combatant>& combatants)
+    {
+        if (!combatant.alive)
+            return;
+
+        movement = NormalizeXZ(movement);
+
+        if (LengthXZ(movement) <= 0.001f)
+            return;
+
+        combatant.bodyYaw =
+            DirectionYaw(movement);
+
+        Vector3 next = combatant.position;
+        next.x += movement.x * speed * dt;
+
+        if (
+            !PositionBlocked(next, obstacles) &&
+            !OnlinePositionBlockedByTank(
+                next,
+                selfIndex,
+                combatants
+            )
+        )
+        {
+            combatant.position.x = next.x;
+        }
+
+        next = combatant.position;
+        next.z += movement.z * speed * dt;
+
+        if (
+            !PositionBlocked(next, obstacles) &&
+            !OnlinePositionBlockedByTank(
+                next,
+                selfIndex,
+                combatants
+            )
+        )
+        {
+            combatant.position.z = next.z;
+        }
+    }
+
     Vector3 MouseWorldPoint(const Camera3D& camera, float planeY)
     {
         Ray ray = GetMouseRay(GetArenaMousePosition(), camera);
@@ -4286,12 +4380,14 @@ namespace
         // position back and SmoothOnlineCombatants() reconciles it.
         if (player.alive)
         {
-            MoveCombatant(
+            MoveOnlineCombatant(
                 player,
+                onlineLocalPlayerIndex,
                 movement,
                 dt,
                 PLAYER_SPEED,
-                obstacles
+                obstacles,
+                combatants
             );
         }
 

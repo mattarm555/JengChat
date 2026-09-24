@@ -21,11 +21,14 @@ namespace
         if (!NetSendLine("USERS_REQUEST")) app.onlineUsersStatus = NetLastError();
     }
 
-    const char* InviteTitle(GameView game)
+    const char* InviteTitle(const AppState& app, GameView game)
     {
         switch (game)
         {
-            case GameView::CHESS: return "CHESS CHALLENGE";
+            case GameView::CHESS:
+                return app.chess.active
+                    ? "INVITE CHESS SPECTATOR"
+                    : "CHESS CHALLENGE";
             case GameView::BLACKJACK: return "BLACKJACK INVITE";
             case GameView::POKER: return "POKER INVITE";
             case GameView::ROULETTE: return "ROULETTE INVITE";
@@ -34,11 +37,18 @@ namespace
         }
     }
 
-    std::string InviteCommand(GameView game, const std::string& name)
+    std::string InviteCommand(
+        const AppState& app,
+        GameView game,
+        const std::string& name
+    )
     {
         switch (game)
         {
-            case GameView::CHESS: return "/chess " + name;
+            case GameView::CHESS:
+                return app.chess.active
+                    ? "CHESS_SPECTATE_INVITE|" + name
+                    : "/chess " + name;
             case GameView::BLACKJACK: return "/blackjack " + name;
             case GameView::POKER: return "/poker " + name;
             case GameView::ROULETTE: return "/roulette " + name;
@@ -51,6 +61,14 @@ namespace
     {
         switch (app.playerInviteGame)
         {
+            case GameView::CHESS:
+                if (app.chess.whitePlayer == name ||
+                    app.chess.blackPlayer == name)
+                    return true;
+                for (const auto& spectator : app.chess.spectators)
+                    if (spectator == name)
+                        return true;
+                break;
             case GameView::BLACKJACK:
                 for (const auto& player : app.blackjack.players) if (player.name == name) return true;
                 break;
@@ -60,7 +78,11 @@ namespace
             case GameView::ARENA:
                 for (const auto& player : app.arena.players) if (player.name == name) return true;
                 break;
-            case GameView::POKER: return app.poker.opponent == name;
+            case GameView::POKER:
+                for (const auto& player : app.poker.players)
+                    if (player.name == name)
+                        return true;
+                break;
             default: break;
         }
         return false;
@@ -87,7 +109,7 @@ void DrawOnlineUsers(AppState& app, int canvasWidth, int canvasHeight)
     DrawRectangle(0, 0, canvasWidth, canvasHeight, Color{0, 0, 0, 205});
     Rectangle panel = {canvasWidth / 2.0f - 300, canvasHeight / 2.0f - 265, 600, 530};
     DrawRectangleRounded(panel, 0.04f, 8, PANEL);
-    DrawFittedText(InviteTitle(app.playerInviteGame), {panel.x + 24, panel.y + 24, 430, 28}, 24, JENG_YELLOW);
+    DrawFittedText(InviteTitle(app, app.playerInviteGame), {panel.x + 24, panel.y + 24, 430, 28}, 24, JENG_YELLOW);
     if (DrawActionButton({panel.x + 484, panel.y + 20, 92, 36}, "CLOSE", false, JENG_RED))
     { app.showOnlineUsers = false; return; }
     DrawFittedText("Current players online.", {panel.x + 24, panel.y + 65, 552, 20}, 15, TEXT_MUTED);
@@ -136,7 +158,7 @@ void DrawOnlineUsers(AppState& app, int canvasWidth, int canvasHeight)
         if (inviting && DrawActionButton({list.x + 430, y + 4, 110, 34},
             "INVITE", !NetIsConnected(), JENG_YELLOW))
         {
-            const std::string command = InviteCommand(app.playerInviteGame, name);
+            const std::string command = InviteCommand(app, app.playerInviteGame, name);
             if (!command.empty() && NetSendLine(command))
             {
                 app.outboundChallengeGame = app.playerInviteGame;

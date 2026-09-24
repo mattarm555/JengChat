@@ -1,4 +1,3 @@
-#include "../ui/players.h"
 #include "poker.h"
 
 #include "cards/card_renderer.h"
@@ -6,6 +5,7 @@
 #include "../networking.h"
 #include "../theme.h"
 #include "../ui/command_popup.h"
+#include "../ui/players.h"
 #include "../ui/ui_common.h"
 
 #include <algorithm>
@@ -19,41 +19,22 @@ namespace
     const Color FELT_DARK = {16, 58, 44, 255};
     const Color RAIL = {113, 78, 43, 255};
 
-    void DrawPlayerTag(
-        const string& name,
-        int chips,
-        Vector2 position,
-        bool isDealer,
-        bool isTurn
+    void DrawPositionChip(
+        const char* label,
+        Vector2 center,
+        Color fill,
+        Color text
     )
     {
-        string line = name + "   " + to_string(chips) + " chips";
-
+        DrawCircle((int)center.x, (int)center.y, 10, fill);
+        int width = MeasureText(label, 10);
         DrawText(
-            line.c_str(),
-            (int)position.x,
-            (int)position.y,
-            15,
-            isTurn ? JENG_YELLOW : TEXT_MAIN
+            label,
+            (int)(center.x - width / 2.0f),
+            (int)center.y - 5,
+            10,
+            text
         );
-
-        if (isDealer)
-        {
-            DrawCircle(
-                (int)position.x - 14,
-                (int)position.y + 8,
-                9,
-                Color{242, 242, 238, 255}
-            );
-
-            DrawText(
-                "D",
-                (int)position.x - 19,
-                (int)position.y + 1,
-                13,
-                BG
-            );
-        }
     }
 
     void DrawCardRow(
@@ -72,7 +53,6 @@ namespace
         float totalWidth =
             cards.size() * cardWidth +
             (cards.size() - 1) * gap;
-
         float x = centerX - totalWidth / 2.0f;
 
         for (int i = 0; i < (int)cards.size(); i++)
@@ -90,21 +70,138 @@ namespace
                 DrawPlayingCard(cards[i], card);
             else
             {
-                DrawRectangleRounded(
-                    card,
-                    0.06f,
-                    6,
-                    Color{255, 255, 255, 18}
-                );
-
+                DrawRectangleRounded(card, 0.06f, 6, Color{255,255,255,18});
                 DrawRectangleRoundedLinesEx(
-                    card,
-                    0.06f,
-                    6,
-                    1.0f,
-                    Color{255, 255, 255, 45}
+                    card, 0.06f, 6, 1.0f, Color{255,255,255,45}
                 );
             }
+        }
+    }
+
+    vector<PokerClientPlayer> SeatOrder(
+        const PokerClientState& poker
+    )
+    {
+        // The server keeps players in table-seat order and sends that same
+        // order to every client. Preserve it so all players see one shared
+        // table layout and the dealer/blind chips visibly move each hand.
+        return poker.players;
+    }
+
+    struct SeatPosition
+    {
+        Vector2 cards;
+        Vector2 badge;
+    };
+
+    SeatPosition PokerSeatPosition(Rectangle felt, int relativeSeat)
+    {
+        float centerX = felt.x + felt.width / 2.0f;
+        float bottom = felt.y + felt.height;
+        const SeatPosition seats[6] = {
+            // Keep the bottom-center cards beside their badge without letting
+            // that badge collide with the lower-left seat.
+            {{centerX + 40, bottom - 82}, {centerX - 178, bottom - 56}},
+            {{felt.x + 100, bottom - 142}, {felt.x + 24, bottom - 66}},
+            {{felt.x + 105, felt.y + 68}, {felt.x + 26, felt.y + 22}},
+            {{centerX, felt.y + 50}, {centerX - 72, felt.y + 12}},
+            {{felt.x + felt.width - 105, felt.y + 68}, {felt.x + felt.width - 168, felt.y + 22}},
+            {{felt.x + felt.width - 100, bottom - 142}, {felt.x + felt.width - 168, bottom - 66}}
+        };
+        return seats[max(0, min(5, relativeSeat))];
+    }
+
+    void DrawPokerSeat(
+        const PokerClientPlayer& player,
+        Rectangle felt,
+        int relativeSeat,
+        const PokerClientState& poker,
+        bool local,
+        bool lobby
+    )
+    {
+        SeatPosition position = PokerSeatPosition(felt, relativeSeat);
+        Rectangle badge = {position.badge.x, position.badge.y, 144, 46};
+        bool isTurn = poker.turn == player.name;
+
+        DrawRectangleRounded(badge, 0.10f, 8, Color{12,49,37,242});
+        DrawRectangleRoundedLinesEx(
+            badge,
+            0.10f,
+            8,
+            isTurn ? 2.0f : 1.0f,
+            isTurn ? JENG_YELLOW : Color{255,255,255,45}
+        );
+
+        string name = local ? "YOU - " + player.name : player.name;
+        int nameSize = MeasureText(name.c_str(), 13) > 118 ? 11 : 13;
+        DrawText(
+            name.c_str(),
+            (int)badge.x + 8,
+            (int)badge.y + 6,
+            nameSize,
+            isTurn ? JENG_YELLOW : TEXT_MAIN
+        );
+
+        string stack = to_string(player.stack) + " chips";
+        if (!lobby && player.bet > 0)
+            stack += "  Bet " + to_string(player.bet);
+        if (!lobby && player.folded)
+            stack = "FOLDED";
+        else if (!lobby && player.allIn)
+            stack += "  ALL IN";
+
+        DrawText(
+            stack.c_str(),
+            (int)badge.x + 8,
+            (int)badge.y + 25,
+            11,
+            player.folded ? TEXT_MUTED : (local ? JENG_YELLOW : TEXT_MAIN)
+        );
+
+        float markerX = badge.x + badge.width - 12;
+        float markerY = badge.y + 11;
+        if (poker.dealer == player.name)
+        {
+            DrawPositionChip("D", {markerX, markerY}, Color{242,242,238,255}, BG);
+            markerY += 23;
+        }
+        if (poker.smallBlindPlayer == player.name)
+        {
+            DrawPositionChip("SB", {markerX, markerY}, JENG_YELLOW, BG);
+            markerY += 23;
+        }
+        if (poker.bigBlindPlayer == player.name)
+            DrawPositionChip("BB", {markerX, markerY}, JENG_RED, WHITE);
+
+        if (lobby)
+            return;
+
+        vector<string> cards;
+        bool backs = false;
+        if (local)
+            cards = poker.holeCards;
+        else if (player.revealed && player.cards.size() == 2)
+            cards = player.cards;
+        else if (!player.folded)
+        {
+            cards = {"back", "back"};
+            backs = true;
+        }
+
+        if (!cards.empty())
+        {
+            float width = local ? 56.0f : 42.0f;
+            float height = local ? 79.0f : 59.0f;
+            DrawCardRow(
+                cards,
+                position.cards.x,
+                position.cards.y,
+                width,
+                height,
+                local ? 8.0f : 5.0f,
+                backs
+            );
         }
     }
 
@@ -133,9 +230,7 @@ namespace
 
     int MaxRaiseTo(const PokerClientState& poker)
     {
-        int yourMaximum = poker.yourBet + poker.yourStack;
-        int opponentMaximum = poker.opponentBet + poker.opponentStack;
-        return min(yourMaximum, opponentMaximum);
+        return poker.maxRaiseTo;
     }
 
     void KeepRaiseTargetValid(PokerClientState& poker)
@@ -202,8 +297,8 @@ namespace
         );
 
         DrawText(
-            "HEADS-UP TEXAS HOLD'EM",
-            (int)(felt.x + felt.width / 2.0f - 125),
+            "2-6 PLAYER TEXAS HOLD'EM",
+            (int)(felt.x + felt.width / 2.0f - 128),
             (int)felt.y + 62,
             19,
             Color{235, 225, 185, 210}
@@ -242,7 +337,7 @@ namespace
             OpenCommandPrompt(
                 app.commandPopup,
                 "CREATE POKER TABLE",
-                "Choose your table settings first. You can invite a player after the table is created.",
+                "Choose table settings, then invite up to five players.",
                 "/pokercreate",
                 {
                     "Starting chips",
@@ -252,7 +347,7 @@ namespace
         }
 
         DrawText(
-            "Create the table first, then invite your opponent from the lobby.",
+            "Create a table, invite up to five players, then start with 2-6.",
             (int)bounds.x + 255,
             (int)bounds.y + 454,
             13,
@@ -275,7 +370,6 @@ namespace
     )
     {
         PokerClientState& poker = app.poker;
-
         Rectangle table = {
             bounds.x + 35,
             bounds.y + 66,
@@ -290,14 +384,12 @@ namespace
             table.height / 2.0f,
             RAIL
         );
-
         Rectangle felt = {
             table.x + 12,
             table.y + 12,
             table.width - 24,
             table.height - 24
         };
-
         DrawEllipse(
             (int)(felt.x + felt.width / 2.0f),
             (int)(felt.y + felt.height / 2.0f),
@@ -305,7 +397,6 @@ namespace
             felt.height / 2.0f,
             FELT
         );
-
         DrawEllipse(
             (int)(felt.x + felt.width / 2.0f),
             (int)(felt.y + felt.height / 2.0f),
@@ -314,127 +405,36 @@ namespace
             FELT_DARK
         );
 
-        float centerX =
-            felt.x +
-            felt.width / 2.0f;
-
-        bool isHost =
-            poker.hostName ==
-            app.username;
-
-        string topPlayer =
-            poker.opponent.empty()
-                ? "OPEN SEAT"
-                : poker.opponent;
-
-        DrawPlayerTag(
-            topPlayer,
-            poker.opponent.empty()
-                ? 0
-                : poker.startingChips,
-            Vector2{
-                centerX - 90.0f,
-                felt.y + 58.0f
-            },
-            false,
-            false
-        );
-
-        vector<string> cardBacks = {
-            "back",
-            "back"
-        };
-
-        if (!poker.opponent.empty())
+        vector<PokerClientPlayer> seats = SeatOrder(poker);
+        while (seats.size() < 6)
         {
-            DrawCardRow(
-                cardBacks,
-                centerX,
-                felt.y + 85.0f,
-                62,
-                88,
-                9,
+            PokerClientPlayer open;
+            open.name = "OPEN SEAT";
+            seats.push_back(open);
+        }
+        for (int i = 0; i < 6; i++)
+            DrawPokerSeat(
+                seats[i],
+                felt,
+                i,
+                poker,
+                seats[i].name == app.username,
                 true
             );
-        }
 
-        // Host / local seat.
-        float yourCardsY =
-            felt.y +
-            felt.height -
-            98.0f;
-
-        Rectangle localInfo = {
-            centerX - 240.0f,
-            yourCardsY + 17.0f,
-            145.0f,
-            54.0f
-        };
-
-        DrawRectangleRounded(
-            localInfo,
-            0.08f,
-            8,
-            Color{12, 49, 37, 230}
-        );
-
-        DrawText(
-            app.username.c_str(),
-            (int)localInfo.x + 10,
-            (int)localInfo.y + 8,
-            15,
-            JENG_YELLOW
-        );
-
-        string localChips =
-            to_string(poker.startingChips) +
-            " chips";
-
-        DrawText(
-            localChips.c_str(),
-            (int)localInfo.x + 10,
-            (int)localInfo.y + 29,
-            13,
-            TEXT_MAIN
-        );
-
-        DrawCardRow(
-            cardBacks,
-            centerX,
-            yourCardsY,
-            62,
-            88,
-            9,
-            true
-        );
-
+        float centerX = felt.x + felt.width / 2.0f;
         string settings =
-            "Starting chips " +
-            to_string(poker.startingChips) +
-            "   Blinds " +
-            to_string(poker.smallBlind) +
-            "/" +
+            to_string(poker.players.size()) + "/6 PLAYERS   Starting chips " +
+            to_string(poker.startingChips) + "   Blinds " +
+            to_string(poker.smallBlind) + "/" +
             to_string(poker.bigBlind);
-
-        int settingsWidth =
-            MeasureText(
-                settings.c_str(),
-                14
-            );
-
+        int settingsWidth = MeasureText(settings.c_str(), 14);
         DrawText(
             settings.c_str(),
-            (int)(
-                centerX -
-                settingsWidth / 2.0f
-            ),
-            (int)(
-                felt.y +
-                felt.height / 2.0f -
-                10.0f
-            ),
+            (int)(centerX - settingsWidth / 2.0f),
+            (int)(felt.y + felt.height / 2.0f - 8),
             14,
-            TEXT_MUTED
+            JENG_YELLOW
         );
 
         DrawText(
@@ -445,20 +445,19 @@ namespace
             TEXT_MAIN
         );
 
+        bool isHost = poker.hostName == app.username;
         Rectangle inviteButton = {
             bounds.x + 35,
             bounds.y + bounds.height - 104,
             150,
             42
         };
-
         Rectangle startButton = {
             bounds.x + 195,
             bounds.y + bounds.height - 104,
             140,
             42
         };
-
         Rectangle leaveButton = {
             bounds.x + bounds.width - 118,
             bounds.y + bounds.height - 104,
@@ -468,7 +467,7 @@ namespace
 
         if (
             isHost &&
-            poker.opponent.empty() &&
+            poker.players.size() < 6 &&
             !interactionsBlocked &&
             DrawButton(
                 inviteButton,
@@ -485,7 +484,7 @@ namespace
 
         if (
             isHost &&
-            !poker.opponent.empty() &&
+            poker.players.size() >= 2 &&
             !interactionsBlocked &&
             DrawButton(
                 startButton,
@@ -497,10 +496,7 @@ namespace
             )
         )
         {
-            SendPokerCommand(
-                app,
-                "/pokerstart"
-            );
+            SendPokerCommand(app, "/pokerstart");
         }
 
         if (
@@ -515,13 +511,9 @@ namespace
             )
         )
         {
-            SendPokerCommand(
-                app,
-                "/resign"
-            );
+            SendPokerCommand(app, "/resign");
         }
     }
-
     void DrawPokerActions(
         AppState& app,
         Rectangle bounds,
@@ -551,10 +543,11 @@ namespace
 
         if (!poker.handActive)
         {
+            bool isHost = poker.hostName == app.username;
             Rectangle nextButton = {
                 actionArea.x + 16,
                 actionArea.y + 18,
-                150,
+                135,
                 42
             };
 
@@ -573,9 +566,63 @@ namespace
                 SendPokerCommand(app, "/pokernext");
             }
 
+            bool canInvite =
+                isHost &&
+                poker.players.size() < 6;
+
+            Rectangle inviteButton = {
+                actionArea.x + 161,
+                actionArea.y + 18,
+                145,
+                42
+            };
+
+            if (
+                canInvite &&
+                !interactionsBlocked &&
+                DrawButton(
+                    inviteButton,
+                    "INVITE PLAYER",
+                    JENG_RED,
+                    Color{255,80,80,255},
+                    WHITE,
+                    13
+                )
+            )
+            {
+                OpenPlayerInvite(app, GameView::POKER);
+            }
+
+            Rectangle endButton = {
+                actionArea.x + (canInvite ? 316 : 161),
+                actionArea.y + 18,
+                110,
+                42
+            };
+
+            if (
+                isHost &&
+                !interactionsBlocked &&
+                DrawButton(
+                    endButton,
+                    "END GAME",
+                    PANEL_LIGHT,
+                    JENG_RED,
+                    TEXT_MAIN,
+                    13
+                )
+            )
+            {
+                SendPokerCommand(app, "/pokerend");
+            }
+
             DrawText(
                 poker.status.c_str(),
-                (int)actionArea.x + 188,
+                (int)actionArea.x + (
+                    isHost
+                    ? (canInvite ? 440 : 285)
+                    : 165
+                ),
                 (int)actionArea.y + 29,
                 14,
                 TEXT_MAIN
@@ -588,7 +635,7 @@ namespace
         {
             string waiting =
                 "Waiting for " +
-                (poker.turn.empty() ? string("opponent") : poker.turn) +
+                (poker.turn.empty() ? string("another player") : poker.turn) +
                 "...";
 
             DrawText(
@@ -868,6 +915,173 @@ namespace
             100
         );
     }
+
+    void DrawPokerLeaderboard(
+        AppState& app,
+        Rectangle bounds,
+        bool interactionsBlocked
+    )
+    {
+        PokerClientState& poker = app.poker;
+
+        Rectangle panel = {
+            bounds.x + 70,
+            bounds.y + 76,
+            bounds.width - 140,
+            bounds.height - 130
+        };
+        DrawRectangleRounded(panel, 0.04f, 10, PANEL_ALT);
+        DrawRectangleRoundedLinesEx(
+            panel,
+            0.04f,
+            10,
+            1.5f,
+            Color{255,255,255,45}
+        );
+
+        DrawText(
+            "FINAL CHIP LEADERBOARD",
+            (int)panel.x + 24,
+            (int)panel.y + 20,
+            24,
+            JENG_YELLOW
+        );
+
+        string starting =
+            "Every player started with " +
+            to_string(poker.leaderboardStartingChips) +
+            " chips";
+        DrawText(
+            starting.c_str(),
+            (int)panel.x + 25,
+            (int)panel.y + 53,
+            14,
+            TEXT_MUTED
+        );
+
+        Rectangle list = {
+            panel.x + 22,
+            panel.y + 82,
+            panel.width - 44,
+            panel.height - 142
+        };
+
+        const int visibleRows = 6;
+        int maxScroll = max(
+            0,
+            (int)poker.leaderboard.size() - visibleRows
+        );
+        if (IsMouseInside(list))
+            poker.leaderboardScroll -= (int)GetMouseWheelMove();
+        poker.leaderboardScroll = max(
+            0,
+            min(maxScroll, poker.leaderboardScroll)
+        );
+
+        int end = min(
+            (int)poker.leaderboard.size(),
+            poker.leaderboardScroll + visibleRows
+        );
+        int lastRankedIndex = -1;
+        for (int i = 0; i < (int)poker.leaderboard.size(); i++)
+            if (!poker.leaderboard[i].left)
+                lastRankedIndex = i;
+
+        int rankNumber = 0;
+        for (int i = 0; i < poker.leaderboardScroll; i++)
+            if (!poker.leaderboard[i].left)
+                rankNumber++;
+
+        for (int i = poker.leaderboardScroll; i < end; i++)
+        {
+            const PokerLeaderboardEntry& entry = poker.leaderboard[i];
+            int rowIndex = i - poker.leaderboardScroll;
+            Rectangle row = {
+                list.x,
+                list.y + rowIndex * 45.0f,
+                list.width,
+                38
+            };
+            DrawRectangleRounded(
+                row,
+                0.08f,
+                6,
+                i == 0 ? Color{50,57,40,255} : PANEL_LIGHT
+            );
+
+            if (!entry.left)
+                rankNumber++;
+            string rank = entry.left
+                ? "LEFT"
+                : "#" + to_string(rankNumber);
+            DrawText(
+                rank.c_str(),
+                (int)row.x + 12,
+                (int)row.y + 11,
+                entry.left ? 12 : 14,
+                entry.left
+                    ? JENG_RED
+                    : (i == 0 ? JENG_YELLOW : TEXT_MUTED)
+            );
+            DrawText(
+                entry.name.c_str(),
+                (int)row.x + 58,
+                (int)row.y + 10,
+                16,
+                entry.name == app.username ? JENG_YELLOW : TEXT_MAIN
+            );
+
+            int difference =
+                entry.chips - poker.leaderboardStartingChips;
+            string chipText =
+                to_string(entry.chips) + " chips  (" +
+                (difference >= 0 ? "+" : "") +
+                to_string(difference) + ")";
+            int chipWidth = MeasureText(chipText.c_str(), 14);
+            DrawText(
+                chipText.c_str(),
+                (int)(row.x + row.width - chipWidth - 12),
+                (int)row.y + 11,
+                14,
+                difference >= 0 ? SUCCESS : JENG_RED
+            );
+
+            if (!entry.left && (i == 0 || i == lastRankedIndex))
+            {
+                const char* label =
+                    i == 0 ? "MOST" : "LEAST";
+                DrawText(
+                    label,
+                    (int)row.x + 205,
+                    (int)row.y + 12,
+                    12,
+                    i == 0 ? JENG_YELLOW : TEXT_MUTED
+                );
+            }
+        }
+
+        Rectangle doneButton = {
+            panel.x + panel.width - 112,
+            panel.y + panel.height - 48,
+            88,
+            32
+        };
+        if (
+            !interactionsBlocked &&
+            DrawButton(
+                doneButton,
+                "DONE",
+                JENG_RED,
+                Color{255,80,80,255},
+                WHITE,
+                13
+            )
+        )
+        {
+            poker.showLeaderboard = false;
+            poker.leaderboard.clear();
+        }
+    }
 }
 
 void DrawPokerPanel(AppState& app, Rectangle bounds, bool interactionsBlocked)
@@ -881,7 +1095,7 @@ void DrawPokerPanel(AppState& app, Rectangle bounds, bool interactionsBlocked)
     );
 
     DrawText(
-        "heads-up Texas Hold'em",
+        "2-6 player Texas Hold'em",
         (int)bounds.x + 112,
         (int)bounds.y + 25,
         14,
@@ -908,6 +1122,16 @@ void DrawPokerPanel(AppState& app, Rectangle bounds, bool interactionsBlocked)
     )
     {
         app.gameView = GameView::HOME;
+    }
+
+    if (app.poker.showLeaderboard)
+    {
+        DrawPokerLeaderboard(
+            app,
+            bounds,
+            interactionsBlocked
+        );
+        return;
     }
 
     if (!app.poker.tableActive)
@@ -938,7 +1162,6 @@ void DrawPokerPanel(AppState& app, Rectangle bounds, bool interactionsBlocked)
         bounds.width - 70,
         bounds.height - 195
     };
-
     DrawEllipse(
         (int)(table.x + table.width / 2.0f),
         (int)(table.y + table.height / 2.0f),
@@ -953,7 +1176,6 @@ void DrawPokerPanel(AppState& app, Rectangle bounds, bool interactionsBlocked)
         table.width - 24,
         table.height - 24
     };
-
     DrawEllipse(
         (int)(felt.x + felt.width / 2.0f),
         (int)(felt.y + felt.height / 2.0f),
@@ -961,7 +1183,6 @@ void DrawPokerPanel(AppState& app, Rectangle bounds, bool interactionsBlocked)
         felt.height / 2.0f,
         FELT
     );
-
     DrawEllipse(
         (int)(felt.x + felt.width / 2.0f),
         (int)(felt.y + felt.height / 2.0f),
@@ -970,48 +1191,42 @@ void DrawPokerPanel(AppState& app, Rectangle bounds, bool interactionsBlocked)
         FELT_DARK
     );
 
+    vector<PokerClientPlayer> seats = SeatOrder(poker);
+    for (int i = 0; i < (int)seats.size() && i < 6; i++)
+        DrawPokerSeat(
+            seats[i],
+            felt,
+            i,
+            poker,
+            seats[i].name == app.username,
+            false
+        );
+
     float centerX = felt.x + felt.width / 2.0f;
+    float centerY = felt.y + felt.height / 2.0f;
+    vector<string> board = poker.communityCards;
+    while (board.size() < 5)
+        board.push_back("--");
 
-    DrawPlayerTag(
-        poker.opponent.empty() ? "OPPONENT" : poker.opponent,
-        poker.opponentStack,
-        Vector2{centerX - 95, felt.y + 26},
-        poker.dealer == poker.opponent,
-        poker.turn == poker.opponent
-    );
-
-    vector<string> opponentCards =
-        poker.opponentRevealed && poker.opponentCards.size() == 2
-        ? poker.opponentCards
-        : vector<string>{"back", "back"};
-
+    // The community row owns the clear center lane. Player cards stay
+    // around the outer rail, so all five board cards remain unobstructed.
     DrawCardRow(
-        opponentCards,
+        board,
         centerX,
-        felt.y + 50,
-        62,
-        88,
-        9,
-        !poker.opponentRevealed
+        centerY - 39,
+        48,
+        67,
+        6,
+        false
     );
 
-    // Compact POT badge centered between the two players.
-    // It sits directly above the community-card row so it stays readable
-    // without covering either player's chip count.
     Rectangle potBadge = {
-        centerX - 46.0f,
-        felt.y + 135.0f,
-        92.0f,
-        42.0f
+        centerX - 43,
+        centerY + 37,
+        86,
+        34
     };
-
-    DrawRectangleRounded(
-        potBadge,
-        0.12f,
-        8,
-        Color{12, 49, 37, 245}
-    );
-
+    DrawRectangleRounded(potBadge, 0.12f, 8, Color{12,49,37,245});
     DrawRectangleRoundedLinesEx(
         potBadge,
         0.12f,
@@ -1019,132 +1234,14 @@ void DrawPokerPanel(AppState& app, Rectangle bounds, bool interactionsBlocked)
         1.5f,
         JENG_YELLOW
     );
-
-    DrawText(
-        "POT",
-        (int)potBadge.x + 10,
-        (int)potBadge.y + 6,
-        11,
-        TEXT_MUTED
-    );
-
-    string potText =
-        to_string(poker.pot);
-
-    DrawText(
-        potText.c_str(),
-        (int)potBadge.x + 10,
-        (int)potBadge.y + 20,
-        17,
-        JENG_YELLOW
-    );
-
-    vector<string> board = poker.communityCards;
-
-    while (board.size() < 5)
-        board.push_back("--");
-
-    DrawCardRow(
-        board,
-        centerX,
-        felt.y + 177,
-        54,
-        76,
-        7,
-        false
-    );
-
-    float localCardsY =
-        felt.y +
-        felt.height -
-        88.0f;
-
-    Rectangle localPlayerBadge = {
-        centerX - 245.0f,
-        localCardsY + 12.0f,
-        145.0f,
-        58.0f
-    };
-
-    DrawRectangleRounded(
-        localPlayerBadge,
-        0.08f,
-        8,
-        Color{12, 49, 37, 238}
-    );
-
-    DrawRectangleRoundedLinesEx(
-        localPlayerBadge,
-        0.08f,
-        8,
-        1.0f,
-        poker.turn == app.username
-            ? JENG_YELLOW
-            : Color{255,255,255,45}
-    );
-
-    string localName =
-        "YOU - " +
-        app.username;
-
-    DrawText(
-        localName.c_str(),
-        (int)localPlayerBadge.x + 10,
-        (int)localPlayerBadge.y + 8,
-        14,
-        poker.turn == app.username
-            ? JENG_YELLOW
-            : TEXT_MAIN
-    );
-
-    string localStack =
-        to_string(poker.yourStack) +
-        " chips";
-
-    DrawText(
-        localStack.c_str(),
-        (int)localPlayerBadge.x + 10,
-        (int)localPlayerBadge.y + 31,
-        15,
-        JENG_YELLOW
-    );
-
-    if (poker.dealer == app.username)
-    {
-        DrawCircle(
-            (int)localPlayerBadge.x - 12,
-            (int)localPlayerBadge.y + 18,
-            9,
-            Color{242,242,238,255}
-        );
-
-        DrawText(
-            "D",
-            (int)localPlayerBadge.x - 17,
-            (int)localPlayerBadge.y + 11,
-            13,
-            BG
-        );
-    }
-
-    DrawCardRow(
-        poker.holeCards,
-        centerX,
-        localCardsY,
-        62,
-        88,
-        9,
-        false
-    );
+    string potText = "POT " + to_string(poker.pot);
+    DrawCenteredText(potText.c_str(), potBadge, 14, JENG_YELLOW);
 
     string stageLine =
         "Hand " + to_string(poker.handNumber) +
         "   " + poker.stage +
-        "   Blinds " +
-        to_string(poker.smallBlind) +
-        "/" +
-        to_string(poker.bigBlind);
-
+        "   Blinds " + to_string(poker.smallBlind) +
+        "/" + to_string(poker.bigBlind);
     DrawText(
         stageLine.c_str(),
         (int)bounds.x + 30,
@@ -1155,8 +1252,7 @@ void DrawPokerPanel(AppState& app, Rectangle bounds, bool interactionsBlocked)
 
     string betLine =
         "Your bet: " + to_string(poker.yourBet) +
-        "   Opponent bet: " + to_string(poker.opponentBet);
-
+        "   Players: " + to_string(poker.players.size());
     DrawText(
         betLine.c_str(),
         (int)bounds.x + 335,
@@ -1164,7 +1260,6 @@ void DrawPokerPanel(AppState& app, Rectangle bounds, bool interactionsBlocked)
         13,
         TEXT_MUTED
     );
-
     DrawPokerActions(
         app,
         bounds,

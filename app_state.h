@@ -113,6 +113,7 @@ struct BlackjackClientState
 struct ChessClientState
 {
     bool active = false;
+    bool spectating = false;
 
     // 64 characters, row 0 = rank 8, row 7 = rank 1.
     // Empty squares are represented by '.'.
@@ -131,6 +132,7 @@ struct ChessClientState
     std::string turn;
     std::string yourColor;
     std::string status = "Challenge a player to start Chess.";
+    std::vector<std::string> spectators;
 
     int selectedSquare = -1;
 
@@ -140,6 +142,24 @@ struct ChessClientState
     std::vector<int> legalMoves;
     int legalMoveSource = -1;
     bool legalMovesLoaded = false;
+};
+
+struct PokerClientPlayer
+{
+    std::string name;
+    int stack = 0;
+    int bet = 0;
+    bool folded = false;
+    bool allIn = false;
+    bool revealed = false;
+    std::vector<std::string> cards;
+};
+
+struct PokerLeaderboardEntry
+{
+    std::string name;
+    int chips = 0;
+    bool left = false;
 };
 
 struct PokerClientState
@@ -152,28 +172,27 @@ struct PokerClientState
     std::string tablePhase = "WAITING";
 
     std::string hostName;
-    std::string opponent;
     std::string stage = "WAITING";
     std::string turn;
     std::string dealer;
+    std::string smallBlindPlayer;
+    std::string bigBlindPlayer;
     std::string status = "Create a Poker table to begin.";
 
+    std::vector<PokerClientPlayer> players;
     std::vector<std::string> holeCards;
     std::vector<std::string> communityCards;
-    std::vector<std::string> opponentCards;
-    bool opponentRevealed = false;
 
     int yourStack = 0;
-    int opponentStack = 0;
     int pot = 0;
     int yourBet = 0;
-    int opponentBet = 0;
     int currentBet = 0;
     int startingChips = 0;
     int smallBlind = 0;
     int bigBlind = 0;
     int handNumber = 0;
     int lastRaiseSize = 0;
+    int maxRaiseTo = 0;
 
     int raiseTarget = 0;
 
@@ -181,11 +200,18 @@ struct PokerClientState
     // The + / - controls use one of these chip steps:
     // 10, 50, or 100.
     int raiseStep = 10;
+
+    // Final standings remain available after the server closes the table.
+    bool showLeaderboard = false;
+    int leaderboardStartingChips = 0;
+    int leaderboardScroll = 0;
+    std::vector<PokerLeaderboardEntry> leaderboard;
 };
 
 
 struct RouletteBetClientState
 {
+    std::string playerName;
     std::string type;
     int value = 0;
     int amount = 0;
@@ -225,6 +251,7 @@ struct RouletteClientState
 
     std::vector<RoulettePlayerClientState> players;
     std::vector<RouletteBetClientState> bets;
+    std::vector<RouletteBetClientState> tableBets;
     std::vector<std::string> payoutMessages;
 
     float spinStartTime = 0.0f;

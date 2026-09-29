@@ -25,3 +25,8 @@ Thumbs.db
 
 # Generated resource object
 jengchat_res.o
+
+# Specific Files
+
+VERIFY_UPDATE.py
+POKER_6_PLAYER_UPDATE.md

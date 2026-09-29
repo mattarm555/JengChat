@@ -14,7 +14,7 @@ SOURCES = \
 	$(wildcard games/*.cpp) \
 	$(wildcard games/cards/*.cpp)
 
-LIBS = -lraylib -lopengl32 -lgdi32 -lwinmm -lws2_32 -pthread
+LIBS = -lssl -lcrypto -lraylib -lopengl32 -lgdi32 -lwinmm -lws2_32 -pthread
 
 
 all: $(TARGET)

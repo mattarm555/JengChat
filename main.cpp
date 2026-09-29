@@ -165,6 +165,18 @@ int main()
             ProcessIncomingMessages(app);
         }
 
+        if (app.screen == AppScreen::MAIN && !NetIsConnected())
+        {
+            if (app.gameView == GameView::ARENA)
+            {
+                app.showOnlineUsers = false;
+                ArenaHandleEscape(app);
+            }
+            NetDisconnect();
+            app = AppState{};
+            app.statusMessage = "Disconnected. Please sign in again.";
+        }
+
         if (IsKeyPressed(KEY_F11))
             ToggleFullscreen();
 

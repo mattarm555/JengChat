@@ -7,3 +7,5 @@ inline constexpr int SERVER_PORT = 54000;
 // The finished canvas is scaled to the actual window size.
 inline constexpr int WINDOW_WIDTH = 1200;
 inline constexpr int WINDOW_HEIGHT = 650;
+
+inline constexpr const char* SERVER_CERTIFICATE = "assets/security/server.crt";

@@ -459,9 +459,9 @@ namespace
             42
         };
         Rectangle leaveButton = {
-            bounds.x + bounds.width - 118,
+            bounds.x + bounds.width - 154,
             bounds.y + bounds.height - 104,
-            88,
+            124,
             42
         };
 
@@ -503,7 +503,7 @@ namespace
             !interactionsBlocked &&
             DrawButton(
                 leaveButton,
-                isHost ? "CLOSE" : "LEAVE",
+                isHost ? "CLOSE TABLE" : "LEAVE",
                 PANEL_LIGHT,
                 JENG_RED,
                 TEXT_MAIN,

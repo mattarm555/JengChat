@@ -213,6 +213,33 @@ bool NetSendLine(const std::string& line) {
     outgoing.push_back(line + "\n"); queuedBytes += line.size() + 1;
     return true;
 }
+bool NetChangeUsername(const std::string& newUsername, const std::string& currentPassword) {
+    if (newUsername.find_first_of("|\r\n") != std::string::npos) return false;
+    std::string encoded = Hex(currentPassword);
+    std::string request = "ACCOUNT_USERNAME|" + newUsername + "|" + encoded;
+    bool sent = NetSendLine(request);
+    OPENSSL_cleanse(encoded.data(), encoded.size());
+    OPENSSL_cleanse(request.data(), request.size());
+    return sent;
+}
+bool NetChangePassword(const std::string& currentPassword, const std::string& newPassword) {
+    std::string currentEncoded = Hex(currentPassword);
+    std::string newEncoded = Hex(newPassword);
+    std::string request = "ACCOUNT_PASSWORD|" + currentEncoded + "|" + newEncoded;
+    bool sent = NetSendLine(request);
+    OPENSSL_cleanse(currentEncoded.data(), currentEncoded.size());
+    OPENSSL_cleanse(newEncoded.data(), newEncoded.size());
+    OPENSSL_cleanse(request.data(), request.size());
+    return sent;
+}
+bool NetDeleteAccount(const std::string& currentPassword) {
+    std::string encoded = Hex(currentPassword);
+    std::string request = "ACCOUNT_DELETE|" + encoded;
+    bool sent = NetSendLine(request);
+    OPENSSL_cleanse(encoded.data(), encoded.size());
+    OPENSSL_cleanse(request.data(), request.size());
+    return sent;
+}
 std::vector<NetMessage> NetPollMessages() {
     std::lock_guard<std::mutex> lock(stateMutex);
     std::vector<NetMessage> result;

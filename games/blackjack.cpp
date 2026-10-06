@@ -1477,7 +1477,7 @@ void DrawBlackjackPanel(
     const char* exitLabel =
         matchEnded
         ? "EXIT TABLE"
-        : (bj.hostName == app.username ? "CLOSE" : "LEAVE");
+        : (bj.hostName == app.username ? "CLOSE TABLE" : "LEAVE");
 
     if (
         DrawActionButton(

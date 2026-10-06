@@ -1096,7 +1096,7 @@ void DrawRoulettePanel(
             !interactionsBlocked &&
             DrawButton(
                 leaveButton,
-                host ? "CLOSE" : "LEAVE",
+                host ? "CLOSE TABLE" : "LEAVE",
                 PANEL_LIGHT,
                 JENG_RED,
                 TEXT_MAIN,

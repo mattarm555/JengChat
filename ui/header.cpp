@@ -6,6 +6,7 @@
 #include "audio_settings.h"
 #include "appearance.h"
 #include "players.h"
+#include "account.h"
 
 void DrawHeader(AppState& app, bool blocked)
 {
@@ -15,13 +16,15 @@ void DrawHeader(AppState& app, bool blocked)
         app.gameView = GameView::HOME;
     if (DrawActionButton({307, 16, 94, 38}, "PLAYERS", blocked, JENG_YELLOW))
         OpenOnlineUsers(app);
-    if (DrawActionButton({409, 16, 94, 38}, "STYLE", blocked, JENG_RED))
+    if (DrawActionButton({409, 16, 94, 38}, "ACCOUNT", blocked, JENG_RED))
+        OpenAccountPanel();
+    if (DrawActionButton({511, 16, 94, 38}, "STYLE", blocked, JENG_RED))
         OpenAppearanceSettings();
-    if (DrawActionButton({511, 16, 94, 38}, "AUDIO", blocked, JENG_YELLOW))
+    if (DrawActionButton({613, 16, 94, 38}, "AUDIO", blocked, JENG_YELLOW))
         OpenAudioSettings();
-    if (DrawActionButton({613, 16, 94, 38}, "HELP", blocked, JENG_RED))
+    if (DrawActionButton({715, 16, 94, 38}, "HELP", blocked, JENG_RED))
         app.showHelpMenu = true;
-    DrawFittedText("@" + app.username, {730, 26, 260, 20}, 17, TEXT_MUTED);
+    DrawFittedText("@" + app.username, {825, 26, 190, 20}, 17, TEXT_MUTED);
     Color status = NetIsConnected() ? SUCCESS : ERROR_COLOR;
     DrawCircle(WINDOW_WIDTH - 165, 35, 7, status);
     DrawText(NetIsConnected() ? "CONNECTED" : "OFFLINE", WINDOW_WIDTH - 145, 25, 18, status);

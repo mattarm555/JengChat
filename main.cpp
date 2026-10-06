@@ -22,6 +22,7 @@
 #include "mac_bundle.h"
 #include "ui/appearance.h"
 #include "ui/audio_settings.h"
+#include "ui/account.h"
 
 #include <algorithm>
 
@@ -38,6 +39,7 @@ namespace
         app.showHelpMenu ||
         app.commandPopup.open ||
         app.pendingChallenge.active ||
+        IsAccountPanelOpen() ||
         IsAppearanceSettingsOpen() ||
         IsAudioSettingsOpen();
 }
@@ -70,6 +72,7 @@ namespace
 
         if (app.showOnlineUsers && !app.pendingChallenge.active &&
             !app.showHelpMenu && !app.commandPopup.open &&
+            !IsAccountPanelOpen() &&
             !IsAppearanceSettingsOpen() && !IsAudioSettingsOpen())
             DrawOnlineUsers(app);
 
@@ -82,6 +85,9 @@ namespace
 
         if (app.pendingChallenge.active)
             DrawPendingChallengePopup(app);
+
+        if (IsAccountPanelOpen())
+            DrawAccountPanel(app);
 
         if (IsAppearanceSettingsOpen())
             DrawAppearanceSettings();
@@ -198,6 +204,10 @@ int main()
             else if (app.showOnlineUsers)
             {
                 app.showOnlineUsers = false;
+            }
+            else if (IsAccountPanelOpen())
+            {
+                CancelAccountPanel();
             }
             else if (IsAudioSettingsOpen())
             {

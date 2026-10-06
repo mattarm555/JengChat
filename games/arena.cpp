@@ -6034,7 +6034,7 @@ namespace
         if (
             MenuButton(
                 leaveButton,
-                "LEAVE LOBBY"
+                isHost ? "CLOSE LOBBY" : "LEAVE LOBBY"
             )
         )
         {

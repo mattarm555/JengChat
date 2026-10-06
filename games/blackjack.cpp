@@ -1,3 +1,4 @@
+#include "../ui/players.h"
 #include "blackjack.h"
 
 #include "cards/card_renderer.h"
@@ -767,13 +768,7 @@ void DrawBlackjackPanel(
             )
         )
         {
-            OpenCommandPrompt(
-                app.commandPopup,
-                "BLACKJACK",
-                "Invite players to a Blackjack match.",
-                "/blackjack",
-                {"Player username"}
-            );
+            OpenPlayerInvite(app, GameView::BLACKJACK);
         }
 
         if (
@@ -1482,7 +1477,7 @@ void DrawBlackjackPanel(
     const char* exitLabel =
         matchEnded
         ? "EXIT TABLE"
-        : (bj.hostName == app.username ? "CLOSE" : "LEAVE");
+        : (bj.hostName == app.username ? "CLOSE TABLE" : "LEAVE");
 
     if (
         DrawActionButton(

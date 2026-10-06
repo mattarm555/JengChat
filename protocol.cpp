@@ -128,6 +128,30 @@ namespace
     {
         ChessClientState& chess = app.chess;
 
+        if (msg.type == "CHESS_SPECTATE_CHALLENGE")
+        {
+            vector<string> fields = Split(msg.data);
+
+            if (fields.size() >= 3)
+            {
+                app.pendingChallenge.active = true;
+                app.pendingChallenge.error.clear();
+                app.pendingChallenge.game = GameView::CHESS;
+                app.pendingChallenge.title = "CHESS SPECTATOR INVITE";
+                app.pendingChallenge.message =
+                    fields[0] +
+                    " invited you to watch " +
+                    fields[1] +
+                    " vs. " +
+                    fields[2] +
+                    ".";
+                app.showHelpMenu = false;
+                app.commandPopup.open = false;
+            }
+
+            return;
+        }
+
         if (msg.type == "CHESS_LEGAL")
         {
             // fromSquare|destination1,destination2,...
@@ -187,7 +211,8 @@ namespace
         {
             vector<string> fields = Split(msg.data);
 
-            // board64|whitePlayer|blackPlayer|turn|yourColor
+            // board64|whitePlayer|blackPlayer|turn|yourColor|
+            // spectatorCount|spectator names...
             if (fields.size() < 5)
                 return;
 
@@ -199,13 +224,33 @@ namespace
             chess.blackPlayer = fields[2];
             chess.turn = fields[3];
             chess.yourColor = fields[4];
+            chess.spectating = chess.yourColor == "SPECTATOR";
+            chess.spectators.clear();
+
+            if (fields.size() >= 6)
+            {
+                int spectatorCount = ToInt(fields[5]);
+                for (int i = 0; i < spectatorCount; i++)
+                {
+                    size_t index = 6 + i;
+                    if (index < fields.size())
+                        chess.spectators.push_back(fields[index]);
+                }
+            }
             chess.active = true;
             chess.selectedSquare = -1;
             chess.legalMoves.clear();
             chess.legalMoveSource = -1;
             chess.legalMovesLoaded = false;
 
-            if (chess.turn == app.username)
+            if (chess.spectating)
+                chess.status =
+                    "Watching " +
+                    chess.whitePlayer +
+                    " vs. " +
+                    chess.blackPlayer +
+                    ".";
+            else if (chess.turn == app.username)
                 chess.status = "Your turn.";
             else
                 chess.status = chess.turn + "'s turn.";
@@ -230,8 +275,24 @@ namespace
 
         if (msg.type == "CHESS_END")
         {
-            chess.status = msg.data;
+            vector<string> fields = Split(msg.data);
+
+            chess.status = fields.empty() ? msg.data : fields[0];
+
+            // Newer servers repeat the final board and match details in the
+            // end packet. Older servers only send the status text, so retain
+            // compatibility with both formats.
+            if (fields.size() >= 6 && fields[1].size() == 64)
+            {
+                chess.board = fields[1];
+                chess.whitePlayer = fields[2];
+                chess.blackPlayer = fields[3];
+                chess.turn = fields[4];
+                chess.yourColor = fields[5];
+            }
+
             chess.active = false;
+            chess.spectating = false;
             chess.selectedSquare = -1;
             chess.legalMoves.clear();
             chess.legalMoveSource = -1;
@@ -639,6 +700,34 @@ namespace
                     bet.value = ToInt(fields[1]);
                     bet.amount = ToInt(fields[2]);
                     roulette.bets.push_back(bet);
+                }
+            }
+
+            return;
+        }
+
+        if (msg.type == "RLT_TABLE_BETS")
+        {
+            roulette.tableBets.clear();
+
+            if (!msg.data.empty() && msg.data != "-")
+            {
+                vector<string> encodedBets = SplitNonEmpty(msg.data, ';');
+
+                for (const string& encoded : encodedBets)
+                {
+                    vector<string> fields = Split(encoded, '~');
+
+                    // playerName~type~value~amount
+                    if (fields.size() < 4)
+                        continue;
+
+                    RouletteBetClientState bet;
+                    bet.playerName = fields[0];
+                    bet.type = fields[1];
+                    bet.value = ToInt(fields[2]);
+                    bet.amount = ToInt(fields[3]);
+                    roulette.tableBets.push_back(bet);
                 }
             }
 
@@ -1098,8 +1187,13 @@ namespace
         {
             vector<string> fields = Split(msg.data);
 
-            // host|startingChips|smallBlind|bigBlind|player1|player2|status
-            if (fields.size() < 7)
+            // host|startingChips|smallBlind|bigBlind|status|count|names...
+            if (fields.size() < 6)
+                return;
+
+            int playerCount = ToInt(fields[5]);
+            if (playerCount < 1 || playerCount > 6 ||
+                fields.size() < (size_t)(6 + playerCount))
                 return;
 
             poker.tableActive = true;
@@ -1109,36 +1203,40 @@ namespace
             poker.startingChips = ToInt(fields[1]);
             poker.smallBlind = ToInt(fields[2]);
             poker.bigBlind = ToInt(fields[3]);
+            poker.status = fields[4];
+            poker.players.clear();
 
-            string player1 = fields[4];
-            string player2 = fields[5];
-
-            if (app.username == player1)
-                poker.opponent = player2;
-            else
-                poker.opponent = player1;
+            for (int i = 0; i < playerCount; i++)
+            {
+                PokerClientPlayer player;
+                player.name = fields[6 + i];
+                player.stack = poker.startingChips;
+                poker.players.push_back(player);
+            }
 
             poker.yourStack = poker.startingChips;
-            poker.opponentStack =
-                poker.opponent.empty()
-                ? 0
-                : poker.startingChips;
-
             poker.stage = "WAITING";
             poker.turn.clear();
             poker.dealer.clear();
+            poker.smallBlindPlayer.clear();
+            poker.bigBlindPlayer.clear();
             poker.pot = 0;
             poker.yourBet = 0;
-            poker.opponentBet = 0;
             poker.currentBet = 0;
-            poker.status = fields[6];
-
+            poker.maxRaiseTo = 0;
             poker.holeCards.clear();
             poker.communityCards.clear();
-            poker.opponentCards.clear();
-            poker.opponentRevealed = false;
+            poker.showLeaderboard = false;
+            poker.leaderboard.clear();
+            poker.leaderboardScroll = 0;
 
             app.gameView = GameView::POKER;
+            return;
+        }
+
+        if (msg.type == "POKER_HOST")
+        {
+            poker.hostName = msg.data;
             return;
         }
 
@@ -1146,59 +1244,89 @@ namespace
         {
             vector<string> fields = Split(msg.data);
 
-            // stage|opponent|yourStack|opponentStack|pot|yourBet|
-            // opponentBet|currentBet|turn|dealer|smallBlind|bigBlind|
-            // handActive|handNumber|lastRaiseSize
-            if (fields.size() < 15)
+            // stage|pot|currentBet|turn|dealer|smallBlindPlayer|
+            // bigBlindPlayer|smallBlind|bigBlind|handActive|handNumber|
+            // lastRaiseSize|maxRaiseTo|playerCount|player records...
+            if (fields.size() < 14)
                 return;
 
-            int incomingHandNumber = ToInt(fields[13]);
+            int incomingHandNumber = ToInt(fields[10]);
+            int playerCount = ToInt(fields[13]);
+            if (playerCount < 2 || playerCount > 6 ||
+                fields.size() < (size_t)(14 + playerCount * 5))
+                return;
 
-            if (incomingHandNumber != poker.handNumber)
+            bool newHand = incomingHandNumber != poker.handNumber;
+            vector<PokerClientPlayer> previous = poker.players;
+            poker.players.clear();
+
+            for (int i = 0; i < playerCount; i++)
             {
-                poker.opponentRevealed = false;
-                poker.opponentCards.clear();
+                size_t base = 14 + i * 5;
+                PokerClientPlayer player;
+                player.name = fields[base];
+                player.stack = ToInt(fields[base + 1]);
+                player.bet = ToInt(fields[base + 2]);
+                player.folded = fields[base + 3] == "1";
+                player.allIn = fields[base + 4] == "1";
+
+                if (!newHand)
+                {
+                    auto old = find_if(
+                        previous.begin(),
+                        previous.end(),
+                        [&](const PokerClientPlayer& candidate)
+                        {
+                            return candidate.name == player.name;
+                        }
+                    );
+                    if (old != previous.end())
+                    {
+                        player.cards = old->cards;
+                        player.revealed = old->revealed;
+                    }
+                }
+
+                poker.players.push_back(player);
+                if (player.name == app.username)
+                {
+                    poker.yourStack = player.stack;
+                    poker.yourBet = player.bet;
+                }
+            }
+
+            if (newHand)
+            {
                 poker.status = "New hand dealt.";
+                poker.holeCards.clear();
             }
 
             poker.tableActive = true;
             poker.stage = fields[0];
-            poker.opponent = fields[1];
-            poker.yourStack = ToInt(fields[2]);
-            poker.opponentStack = ToInt(fields[3]);
-            poker.pot = ToInt(fields[4]);
-            poker.yourBet = ToInt(fields[5]);
-            poker.opponentBet = ToInt(fields[6]);
-            poker.currentBet = ToInt(fields[7]);
-            poker.turn = fields[8];
-            poker.dealer = fields[9];
-            poker.smallBlind = ToInt(fields[10]);
-            poker.bigBlind = ToInt(fields[11]);
-            poker.handActive = fields[12] == "1";
-            poker.tablePhase =
-                poker.handActive
-                ? "PLAYING"
-                : "RESULT";
+            poker.pot = ToInt(fields[1]);
+            poker.currentBet = ToInt(fields[2]);
+            poker.turn = fields[3];
+            poker.dealer = fields[4];
+            poker.smallBlindPlayer = fields[5];
+            poker.bigBlindPlayer = fields[6];
+            poker.smallBlind = ToInt(fields[7]);
+            poker.bigBlind = ToInt(fields[8]);
+            poker.handActive = fields[9] == "1";
+            poker.tablePhase = poker.handActive ? "PLAYING" : "RESULT";
             poker.handNumber = incomingHandNumber;
-            poker.lastRaiseSize = ToInt(fields[14]);
+            poker.lastRaiseSize = ToInt(fields[11]);
+            poker.maxRaiseTo = ToInt(fields[12]);
 
             int minRaise =
                 poker.currentBet +
                 max(poker.lastRaiseSize, poker.bigBlind);
-
-            int maxRaise = min(
-                poker.yourBet + poker.yourStack,
-                poker.opponentBet + poker.opponentStack
-            );
-
-            if (maxRaise < minRaise)
-                minRaise = maxRaise;
+            if (poker.maxRaiseTo < minRaise)
+                minRaise = poker.maxRaiseTo;
 
             if (poker.raiseTarget <= poker.currentBet)
                 poker.raiseTarget = max(poker.currentBet, minRaise);
-
-            if (maxRaise >= poker.currentBet)
-                poker.raiseTarget = min(poker.raiseTarget, maxRaise);
+            if (poker.maxRaiseTo >= poker.currentBet)
+                poker.raiseTarget = min(poker.raiseTarget, poker.maxRaiseTo);
 
             app.gameView = GameView::POKER;
             return;
@@ -1239,9 +1367,20 @@ namespace
 
             if (fields.size() >= 3)
             {
-                poker.opponent = fields[0];
-                poker.opponentCards = {fields[1], fields[2]};
-                poker.opponentRevealed = true;
+                auto player = find_if(
+                    poker.players.begin(),
+                    poker.players.end(),
+                    [&](const PokerClientPlayer& candidate)
+                    {
+                        return candidate.name == fields[0];
+                    }
+                );
+
+                if (player != poker.players.end())
+                {
+                    player->cards = {fields[1], fields[2]};
+                    player->revealed = true;
+                }
             }
 
             return;
@@ -1261,6 +1400,37 @@ namespace
             return;
         }
 
+        if (msg.type == "POKER_LEADERBOARD")
+        {
+            vector<string> fields = Split(msg.data);
+
+            // startingChips|count|name|chips|left|name|chips|left...
+            if (fields.size() < 2)
+                return;
+
+            int playerCount = ToInt(fields[1]);
+            if (playerCount < 1 ||
+                fields.size() < (size_t)(2 + playerCount * 3))
+                return;
+
+            poker.leaderboardStartingChips = ToInt(fields[0]);
+            poker.leaderboard.clear();
+
+            for (int i = 0; i < playerCount; i++)
+            {
+                PokerLeaderboardEntry entry;
+                entry.name = fields[2 + i * 3];
+                entry.chips = ToInt(fields[3 + i * 3]);
+                entry.left = fields[4 + i * 3] == "1";
+                poker.leaderboard.push_back(entry);
+            }
+
+            poker.leaderboardScroll = 0;
+            poker.showLeaderboard = true;
+            app.gameView = GameView::POKER;
+            return;
+        }
+
         if (msg.type == "POKER_END")
         {
             poker.status = msg.data;
@@ -1268,6 +1438,8 @@ namespace
             poker.handActive = false;
             poker.tablePhase = "ENDED";
             poker.turn.clear();
+            poker.players.clear();
+            poker.showLeaderboard = !poker.leaderboard.empty();
             return;
         }
     }
@@ -1309,6 +1481,23 @@ void ProcessIncomingMessages(AppState& app)
         if (msg.type.rfind("ARENA_", 0) == 0)
         {
             HandleArenaPacket(app, msg);
+            continue;
+        }
+
+        if (msg.type == "USERS_LIST")
+        {
+            app.onlineUsers.clear();
+            std::istringstream roster(msg.data);
+            std::string name;
+
+            while (std::getline(roster, name, '|'))
+            {
+                if (!name.empty())
+                    app.onlineUsers.push_back(name);
+            }
+
+            std::sort(app.onlineUsers.begin(), app.onlineUsers.end());
+            app.onlineUsersStatus.clear();
             continue;
         }
 

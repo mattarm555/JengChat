@@ -1,3 +1,4 @@
+#include "../ui/players.h"
 #include "roulette.h"
 
 #include "../networking.h"
@@ -22,6 +23,15 @@ namespace
         6, 27, 13, 36, 11, 30, 8, 23, 10, 5,
         24, 16, 33, 1, 20, 14, 31, 9, 22, 18,
         29, 7, 28, 12, 35, 3, 26
+    };
+
+    const array<Color, 6> PLAYER_BET_COLORS = {
+        Color{255, 210, 55, 255},
+        Color{70, 170, 255, 255},
+        Color{255, 105, 165, 255},
+        Color{95, 220, 135, 255},
+        Color{185, 120, 255, 255},
+        Color{255, 145, 65, 255}
     };
 
     bool IsRedNumber(int number)
@@ -129,6 +139,69 @@ namespace
         }
 
         return total;
+    }
+
+    Color PlayerBetColor(
+        const AppState& app,
+        const string& playerName
+    )
+    {
+        for (int i = 0; i < (int)app.roulette.players.size(); i++)
+        {
+            if (app.roulette.players[i].name == playerName)
+                return PLAYER_BET_COLORS[i % PLAYER_BET_COLORS.size()];
+        }
+
+        return TEXT_MUTED;
+    }
+
+    void DrawSharedBetMarkers(
+        const AppState& app,
+        Rectangle rect,
+        const string& type,
+        int value
+    )
+    {
+        vector<const RouletteBetClientState*> matching;
+
+        for (const RouletteBetClientState& bet : app.roulette.tableBets)
+        {
+            if (bet.type == type && bet.value == value)
+                matching.push_back(&bet);
+        }
+
+        if (matching.empty())
+            return;
+
+        bool compact = rect.width < 48.0f;
+        int columns = compact ? 3 : min(6, (int)matching.size());
+        float radius = compact ? 3.0f : 5.0f;
+        float spacing = compact ? 8.0f : 13.0f;
+        float startX = rect.x + 5.0f;
+        float firstY = rect.y + rect.height - (compact ? 4.0f : 6.0f);
+
+        for (int i = 0; i < (int)matching.size() && i < 6; i++)
+        {
+            int row = i / columns;
+            int column = i % columns;
+            Vector2 center = {
+                startX + column * spacing,
+                firstY - row * (radius * 2.0f + 1.0f)
+            };
+
+            DrawCircle(
+                (int)center.x,
+                (int)center.y,
+                radius + 1.0f,
+                Color{12, 18, 16, 255}
+            );
+            DrawCircle(
+                (int)center.x,
+                (int)center.y,
+                radius,
+                PlayerBetColor(app, matching[i]->playerName)
+            );
+        }
     }
 
     bool DrawAction(
@@ -255,10 +328,13 @@ namespace
     }
 
     bool DrawBetSpot(
+        const AppState& app,
         Rectangle rect,
         const string& label,
         Color fill,
         bool enabled,
+        const string& betType,
+        int betValue,
         int amount,
         int fontSize = 12
     )
@@ -305,6 +381,13 @@ namespace
             ),
             fontSize,
             WHITE
+        );
+
+        DrawSharedBetMarkers(
+            app,
+            rect,
+            betType,
+            betValue
         );
 
         DrawBetBadge(
@@ -571,44 +654,6 @@ namespace
             Color{180, 180, 185, 255}
         );
 
-        if (
-            !roulette.animating &&
-            roulette.lastResult >= 0
-        )
-        {
-            string result =
-                "WINNING NUMBER: " +
-                to_string(
-                    roulette.lastResult
-                );
-
-            int width =
-                MeasureText(
-                    result.c_str(),
-                    16
-                );
-
-            DrawText(
-                result.c_str(),
-                (int)(
-                    center.x -
-                    width / 2.0f
-                ),
-                (int)(
-                    center.y +
-                    radius +
-                    22.0f
-                ),
-                16,
-                roulette.lastResult == 0
-                    ? SUCCESS
-                    : (
-                        IsRedNumber(roulette.lastResult)
-                            ? JENG_RED
-                            : TEXT_MAIN
-                      )
-            );
-        }
     }
 
     void DrawPlayerStrip(
@@ -663,12 +708,19 @@ namespace
 
             DrawText(
                 player.name.c_str(),
-                (int)seat.x + 7,
+                (int)seat.x + 20,
                 (int)seat.y + 6,
                 12,
                 you
                     ? JENG_YELLOW
                     : TEXT_MAIN
+            );
+
+            DrawCircle(
+                (int)seat.x + 10,
+                (int)seat.y + 12,
+                5.0f,
+                PlayerBetColor(app, player.name)
             );
 
             string info =
@@ -1021,13 +1073,7 @@ void DrawRoulettePanel(
             )
         )
         {
-            OpenCommandPrompt(
-                app.commandPopup,
-                "ROULETTE INVITE",
-                "Invite a player to your Roulette table.",
-                "/roulette",
-                {"Player username"}
-            );
+            OpenPlayerInvite(app, GameView::ROULETTE);
         }
 
         if (
@@ -1050,7 +1096,7 @@ void DrawRoulettePanel(
             !interactionsBlocked &&
             DrawButton(
                 leaveButton,
-                host ? "CLOSE" : "LEAVE",
+                host ? "CLOSE TABLE" : "LEAVE",
                 PANEL_LIGHT,
                 JENG_RED,
                 TEXT_MAIN,
@@ -1089,6 +1135,30 @@ void DrawRoulettePanel(
         292.0f
     };
 
+    if (
+        !roulette.animating &&
+        roulette.lastResult >= 0
+    )
+    {
+        string result =
+            "WINNING NUMBER: " +
+            to_string(roulette.lastResult);
+
+        DrawText(
+            result.c_str(),
+            (int)board.x,
+            (int)board.y - 24,
+            16,
+            roulette.lastResult == 0
+                ? SUCCESS
+                : (
+                    IsRedNumber(roulette.lastResult)
+                        ? JENG_RED
+                        : TEXT_MAIN
+                  )
+        );
+    }
+
     DrawRectangleRounded(
         board,
         0.025f,
@@ -1119,10 +1189,13 @@ void DrawRoulettePanel(
 
     if (
         DrawBetSpot(
+            app,
             zeroRect,
             "0",
             Color{30,150,85,255},
             canBet,
+            "NUMBER",
+            0,
             BetAmount(app, "NUMBER", 0),
             14
         )
@@ -1156,10 +1229,13 @@ void DrawRoulettePanel(
 
             if (
                 DrawBetSpot(
+                    app,
                     cell,
                     to_string(number),
                     RouletteNumberColor(number),
                     canBet,
+                    "NUMBER",
+                    number,
                     BetAmount(
                         app,
                         "NUMBER",
@@ -1226,10 +1302,13 @@ void DrawRoulettePanel(
 
         if (
             DrawBetSpot(
+                app,
                 spot,
                 outsideBets[i].label,
                 outsideBets[i].color,
                 canBet,
+                outsideBets[i].type,
+                0,
                 BetAmount(
                     app,
                     outsideBets[i].type,
@@ -1287,10 +1366,13 @@ void DrawRoulettePanel(
 
         if (
             DrawBetSpot(
+                app,
                 spot,
                 dozenLabels[i],
                 Color{32, 92, 66, 255},
                 canBet,
+                dozenTypes[i],
+                0,
                 BetAmount(
                     app,
                     dozenTypes[i],
@@ -1498,6 +1580,14 @@ void DrawRoulettePanel(
         (int)bounds.x + 24,
         (int)(controlsY - 50),
         12,
+        TEXT_MUTED
+    );
+
+    DrawText(
+        "Board dots match the player colors above.",
+        (int)bounds.x + 24,
+        (int)(controlsY - 34),
+        10,
         TEXT_MUTED
     );
 

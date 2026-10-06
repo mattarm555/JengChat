@@ -20,7 +20,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
     exit 1
 fi
 
-for tool in clang++ cmake git lipo codesign; do
+for tool in clang++ cmake git lipo codesign curl perl make shasum; do
     if ! command -v "${tool}" >/dev/null 2>&1; then
         echo "ERROR: ${tool} was not found."
         exit 1
@@ -56,6 +56,17 @@ git clone \
     --branch "${RAYLIB_VERSION}" \
     https://github.com/raysan5/raylib.git \
     "${RAYLIB_DIR}"
+
+# Build a static OpenSSL library for each architecture; no Homebrew runtime dependency.
+OPENSSL_VERSION="3.5.8"
+OPENSSL_ARCHIVE="vendor/openssl-${OPENSSL_VERSION}.tar.gz"
+OPENSSL_URL="https://github.com/openssl/openssl/releases/download/openssl-${OPENSSL_VERSION}/openssl-${OPENSSL_VERSION}.tar.gz"
+curl --fail --location "${OPENSSL_URL}" -o "${OPENSSL_ARCHIVE}"
+curl --fail --location "${OPENSSL_URL}.sha256" -o "${OPENSSL_ARCHIVE}.sha256"
+expected_hash="$(awk '{print $1}' "${OPENSSL_ARCHIVE}.sha256")"
+actual_hash="$(shasum -a 256 "${OPENSSL_ARCHIVE}" | awk '{print $1}')"
+[[ "$expected_hash" == "$actual_hash" ]] || { echo "OpenSSL checksum mismatch"; exit 1; }
+[[ -f assets/security/server.crt ]] || { echo "Missing assets/security/server.crt"; exit 1; }
 
 SOURCES=(
     main.cpp
@@ -102,6 +113,18 @@ build_arch() {
 
     echo
     echo "Building ${APP_NAME} for ${arch}..."
+    local ssl_source="${PWD}/build/openssl-source-${arch}"
+    local ssl_prefix="${PWD}/build/openssl-install-${arch}"
+    mkdir -p "${ssl_source}"
+    tar -xzf "${OPENSSL_ARCHIVE}" -C "${ssl_source}" --strip-components=1
+    (
+        cd "${ssl_source}"
+        export MACOSX_DEPLOYMENT_TARGET="${DEPLOYMENT_TARGET}"
+        perl Configure "darwin64-${arch}-cc" no-shared no-tests no-module --prefix="${ssl_prefix}" --libdir=lib
+        make -j"$(sysctl -n hw.ncpu)"
+        make install_sw
+    )
+
 
     clang++ \
         -std=c++17 \
@@ -112,6 +135,9 @@ build_arch() {
         -I. \
         -I"${RAYLIB_DIR}/src" \
         "${raylib_lib}" \
+        -I"${ssl_prefix}/include" \
+        "${ssl_prefix}/lib/libssl.a" \
+        "${ssl_prefix}/lib/libcrypto.a" \
         -framework OpenGL \
         -framework Cocoa \
         -framework IOKit \

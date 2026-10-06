@@ -19,6 +19,7 @@ echo
 
 echo "[1/5] Building JENG CHAT..."
 
+test -f assets/security/server.crt || { echo "Missing assets/security/server.crt (copy the public certificate from your server)."; exit 1; }
 ./build_windows.sh
 
 # ------------------------------------------------------------
@@ -74,6 +75,8 @@ for dll in \
     glfw3.dll \
     libgcc_s_seh-1.dll \
     libstdc++-6.dll \
+    libssl-3-x64.dll \
+    libcrypto-3-x64.dll \
     libwinpthread-1.dll
 do
     if [ -f "/ucrt64/bin/$dll" ]; then

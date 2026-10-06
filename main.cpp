@@ -14,6 +14,7 @@
 #include "ui/chat.h"
 #include "ui/command_popup.h"
 #include "ui/header.h"
+#include "ui/players.h"
 #include "ui/help.h"
 #include "ui/login.h"
 #include "ui/ui_common.h"
@@ -21,6 +22,7 @@
 #include "mac_bundle.h"
 #include "ui/appearance.h"
 #include "ui/audio_settings.h"
+#include "ui/account.h"
 
 #include <algorithm>
 
@@ -33,9 +35,11 @@ namespace
     bool HasModalOpen(const AppState& app)
 {
     return
+        app.showOnlineUsers ||
         app.showHelpMenu ||
         app.commandPopup.open ||
         app.pendingChallenge.active ||
+        IsAccountPanelOpen() ||
         IsAppearanceSettingsOpen() ||
         IsAudioSettingsOpen();
 }
@@ -66,6 +70,12 @@ namespace
         DrawChatPanel(app, chatPanel, blocked);
         DrawGameArea(app, gamePanel, blocked);
 
+        if (app.showOnlineUsers && !app.pendingChallenge.active &&
+            !app.showHelpMenu && !app.commandPopup.open &&
+            !IsAccountPanelOpen() &&
+            !IsAppearanceSettingsOpen() && !IsAudioSettingsOpen())
+            DrawOnlineUsers(app);
+
         // Modal UI is always drawn last so it sits over the entire app.
         if (app.showHelpMenu)
             DrawHelpMenu(app);
@@ -75,6 +85,9 @@ namespace
 
         if (app.pendingChallenge.active)
             DrawPendingChallengePopup(app);
+
+        if (IsAccountPanelOpen())
+            DrawAccountPanel(app);
 
         if (IsAppearanceSettingsOpen())
             DrawAppearanceSettings();
@@ -158,6 +171,18 @@ int main()
             ProcessIncomingMessages(app);
         }
 
+        if (app.screen == AppScreen::MAIN && !NetIsConnected())
+        {
+            if (app.gameView == GameView::ARENA)
+            {
+                app.showOnlineUsers = false;
+                ArenaHandleEscape(app);
+            }
+            NetDisconnect();
+            app = AppState{};
+            app.statusMessage = "Disconnected. Please sign in again.";
+        }
+
         if (IsKeyPressed(KEY_F11))
             ToggleFullscreen();
 
@@ -175,6 +200,14 @@ int main()
                     ToggleFullscreen();
                 else
                     ArenaHandleEscape(app);
+            }
+            else if (app.showOnlineUsers)
+            {
+                app.showOnlineUsers = false;
+            }
+            else if (IsAccountPanelOpen())
+            {
+                CancelAccountPanel();
             }
             else if (IsAudioSettingsOpen())
             {

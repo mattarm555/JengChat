@@ -1,182 +1,100 @@
 #include "login.h"
-
 #include "../config.h"
 #include "../networking.h"
 #include "../theme.h"
 #include "ui_common.h"
+#include <openssl/crypto.h>
+#include <algorithm>
 
-using namespace std;
+namespace {
+void ClearSecret(std::string& value) { OPENSSL_cleanse(value.data(), value.size()); value.clear(); }
+}
 
 void DrawLoginScreen(AppState& app)
 {
-    const float panelWidth = 480;
-    const float panelHeight = 390;
-
-    Rectangle panel = {
-        WINDOW_WIDTH / 2.0f - panelWidth / 2.0f,
-        WINDOW_HEIGHT / 2.0f - panelHeight / 2.0f,
-        panelWidth,
-        panelHeight
-    };
-
-    Rectangle usernameBox = {
-        panel.x + 55,
-        panel.y + 180,
-        panel.width - 110,
-        52
-    };
-
-    Rectangle joinButton = {
-        panel.x + 55,
-        panel.y + 260,
-        panel.width - 110,
-        55
-    };
-
-    DrawRectangleRounded(panel, 0.04f, 10, PANEL);
-    DrawRectangleRoundedLinesEx(panel, 0.04f, 10, 2.0f, JENG_YELLOW);
-
-    const char* title = "JENG CHAT";
-    int titleSize = 42;
-    int titleWidth = MeasureText(title, titleSize);
-
-    DrawText(
-        title,
-        WINDOW_WIDTH / 2 - titleWidth / 2,
-        (int)panel.y + 42,
-        titleSize,
-        JENG_RED
-    );
-
-    const char* subtitle = "Connect. Chat. Play.";
-    int subtitleWidth = MeasureText(subtitle, 18);
-
-    DrawText(
-        subtitle,
-        WINDOW_WIDTH / 2 - subtitleWidth / 2,
-        (int)panel.y + 100,
-        18,
-        TEXT_MUTED
-    );
-
-    DrawText(
-        "USERNAME",
-        (int)usernameBox.x,
-        (int)usernameBox.y - 28,
-        18,
-        JENG_YELLOW
-    );
-
-    DrawRectangleRounded(usernameBox, 0.12f, 8, PANEL_LIGHT);
-    DrawRectangleRoundedLinesEx(usernameBox, 0.12f, 8, 2.0f, JENG_YELLOW);
-
-    if (app.username.empty())
+    static bool registering = false, showPassword = false, submitted = false;
+    static int focused = 0;
+    static std::string password, confirmation;
+    if (submitted && !NetIsConnecting())
     {
-        DrawText(
-            "Enter username...",
-            (int)usernameBox.x + 16,
-            (int)usernameBox.y + 15,
-            20,
-            TEXT_MUTED
-        );
-    }
-    else
-    {
-        DrawText(
-            app.username.c_str(),
-            (int)usernameBox.x + 16,
-            (int)usernameBox.y + 15,
-            20,
-            TEXT_MAIN
-        );
-    }
-
-    if (((int)(GetTime() * 2) % 2) == 0)
-    {
-        int textWidth = MeasureText(app.username.c_str(), 20);
-        DrawRectangle(
-            (int)usernameBox.x + 17 + textWidth,
-            (int)usernameBox.y + 14,
-            2,
-            24,
-            TEXT_MAIN
-        );
-    }
-
-    bool hovering = IsMouseInside(joinButton);
-
-    DrawRectangleRounded(
-        joinButton,
-        0.12f,
-        8,
-        hovering ? Color{255, 80, 80, 255} : JENG_RED
-    );
-
-    DrawCenteredText("JOIN JENG CHAT", joinButton, 20, WHITE);
-
-    DrawText(
-        "Private JENG CHAT server",
-        (int)panel.x + 55,
-        (int)panel.y + 335,
-        15,
-        TEXT_MUTED
-    );
-
-    if (!app.statusMessage.empty())
-    {
-        DrawText(
-            app.statusMessage.c_str(),
-            (int)panel.x + 55,
-            (int)panel.y + 360,
-            15,
-            ERROR_COLOR
-        );
-    }
-
-    int key = GetCharPressed();
-
-    while (key > 0)
-    {
-        if (
-            key >= 32 &&
-            key <= 125 &&
-            app.username.length() < 16 &&
-            IsAllowedUsernameChar((char)key)
-        )
+        submitted = false;
+        ClearSecret(password); ClearSecret(confirmation);
+        if (NetIsConnected())
         {
-            app.username += (char)key;
+            app.history.clear();
+            for (const auto& message : NetPollMessages())
+            {
+                if (message.type == "AUTH_OK") app.username = message.data;
+                else if (message.type == "SYS") AddChatLine(app.history, message.data, CHAT_SYSTEM);
+            }
+            app.statusMessage.clear();
+            app.screen = AppScreen::MAIN;
+            app.gameView = GameView::HOME;
+            showPassword = false;
+            return;
         }
-
-        key = GetCharPressed();
-    }
-
-    if (IsKeyPressed(KEY_BACKSPACE) && !app.username.empty())
-        app.username.pop_back();
-
-    bool joinClicked = hovering && IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
-    bool enterPressed = IsKeyPressed(KEY_ENTER);
-
-    if (!(joinClicked || enterPressed))
-        return;
-
-    if (app.username.empty())
-    {
-        app.statusMessage = "Please enter a username.";
-        return;
-    }
-
-    app.statusMessage = "Connecting...";
-
-    if (NetConnect(SERVER_IP, SERVER_PORT, app.username))
-    {
-        app.statusMessage.clear();
-        app.history.clear();
-        AddChatLine(app.history, "Connected to JENG CHAT.", SUCCESS);
-        app.screen = AppScreen::MAIN;
-        app.gameView = GameView::HOME;
-    }
-    else
-    {
         app.statusMessage = NetLastError();
     }
+    bool busy = NetIsConnecting();
+    Rectangle panel = {WINDOW_WIDTH / 2.0f - 280, 24, 560, WINDOW_HEIGHT - 48.0f};
+    DrawRectangleRounded(panel, 0.04f, 10, PANEL);
+    DrawRectangleRoundedLinesEx(panel, 0.04f, 10, 2.0f, JENG_YELLOW);
+    DrawFittedText("JENG CHAT", {panel.x + 32, panel.y + 26, 496, 44}, 38, JENG_RED);
+    DrawFittedText("Connect. Chat. Play.", {panel.x + 32, panel.y + 80, 496, 22}, 18, TEXT_MUTED);
+    bool signIn = DrawActionButton({panel.x + 32, panel.y + 117, 238, 38}, "SIGN IN", busy, JENG_YELLOW);
+    bool create = DrawActionButton({panel.x + 290, panel.y + 117, 238, 38}, "CREATE ACCOUNT", busy, JENG_YELLOW);
+    if (signIn || create) {
+        registering = create; ClearSecret(password); ClearSecret(confirmation);
+        app.statusMessage.clear(); focused = 0; showPassword = false;
+    }
+    DrawRectangle((int)panel.x + (registering ? 290 : 32), (int)panel.y + 157, 238, 3, JENG_YELLOW);
+    const char* labels[] = {"USERNAME", "PASSWORD", "CONFIRM PASSWORD"};
+    std::string* values[] = {&app.username, &password, &confirmation};
+    int count = registering ? 3 : 2;
+    for (int i = 0; i < count; ++i) {
+        float y = panel.y + 180 + i * 82;
+        DrawText(labels[i], (int)panel.x + 32, (int)y, 15, JENG_YELLOW);
+        Rectangle box = {panel.x + 32, y + 22, 496, 42};
+        if (!busy && IsMouseInside(box) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) focused = i;
+        DrawRectangleRounded(box, 0.1f, 8, PANEL_LIGHT);
+        DrawRectangleRoundedLinesEx(box, 0.1f, 8, focused == i ? 2.0f : 1.0f, focused == i ? JENG_YELLOW : TEXT_MUTED);
+        std::string display = i == 0 || showPassword ? *values[i] : std::string(values[i]->size(), '*');
+        while (!display.empty() && MeasureText(display.c_str(), 18) > box.width - 32) display.erase(display.begin());
+        DrawText(display.c_str(), (int)box.x + 12, (int)box.y + 12, 18, TEXT_MAIN);
+        if (focused == i && !busy && ((int)(GetTime() * 2) % 2) == 0)
+            DrawRectangle((int)box.x + 13 + MeasureText(display.c_str(), 18), (int)box.y + 10, 2, 22, TEXT_MAIN);
+    }
+    float controlsY = panel.y + (registering ? 430 : 348);
+    if (DrawActionButton({panel.x + 32, controlsY, 190, 30}, showPassword ? "HIDE PASSWORD" : "SHOW PASSWORD", busy, JENG_YELLOW))
+        showPassword = !showPassword;
+    DrawFittedText("Username: 3-16 letters, numbers, _ or -", {panel.x + 32, controlsY + 42, 496, 18}, 14, TEXT_MUTED);
+    DrawFittedText("Password: 8-128 characters", {panel.x + 32, controlsY + 62, 496, 18}, 14, TEXT_MUTED);
+    Rectangle submit = {panel.x + 288, controlsY, 240, 38};
+    bool clicked = DrawActionButton(submit, busy ? "CONNECTING..." : registering ? "CREATE & SIGN IN" : "SIGN IN", busy, JENG_RED);
+    if (busy && DrawActionButton({panel.x + 288, controlsY + 45, 240, 32}, "CANCEL", false, JENG_YELLOW)) {
+        NetDisconnect(); submitted = false; ClearSecret(password); ClearSecret(confirmation);
+        app.statusMessage = "Sign-in cancelled.";
+    }
+    auto errors = WrapUIMessage(app.statusMessage, 14, 496, 3);
+    DrawUILines(errors, panel.x + 32, panel.y + 528, 14, 18, ERROR_COLOR);
+    if (busy) return;
+    if (IsKeyPressed(KEY_TAB)) focused = (focused + 1) % count;
+    int ch = GetCharPressed();
+    while (ch > 0) {
+        size_t limit = focused == 0 ? 16 : 128;
+        if (ch >= 32 && ch <= 126 && values[focused]->size() < limit &&
+            (focused != 0 || IsAllowedUsernameChar((char)ch))) *values[focused] += (char)ch;
+        ch = GetCharPressed();
+    }
+    if (IsKeyPressed(KEY_BACKSPACE) && !values[focused]->empty()) {
+        values[focused]->back() = '\0'; values[focused]->pop_back();
+    }
+    if (!(clicked || IsKeyPressed(KEY_ENTER))) return;
+    if (app.username.size() < 3) { app.statusMessage = "Enter a username of at least 3 characters."; return; }
+    if (password.size() < 8) { app.statusMessage = "Use a password with at least 8 characters."; return; }
+    if (registering && password != confirmation) { app.statusMessage = "Passwords do not match."; return; }
+    app.statusMessage.clear();
+    submitted = NetConnect(SERVER_IP, SERVER_PORT, app.username, password, registering);
+    ClearSecret(password); ClearSecret(confirmation);
+    if (!submitted) app.statusMessage = NetLastError();
 }

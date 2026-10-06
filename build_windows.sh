@@ -20,6 +20,8 @@ g++ -std=c++17 \
     jengchat_res.o \
     -I. \
     -o JengChat.exe \
+    -lssl \
+    -lcrypto \
     -lraylib \
     -lopengl32 \
     -lgdi32 \

@@ -1,3 +1,4 @@
+#include "../ui/players.h"
 #include "chess.h"
 #include "chess_pieces.h"
 
@@ -250,6 +251,8 @@ void DrawChessPanel(
         opponentName = chess.blackPlayer;
     else if (chess.yourColor == "BLACK")
         opponentName = chess.whitePlayer;
+    else if (chess.spectating)
+        opponentName = chess.blackPlayer;
 
     vector<char> whiteMissing = MissingPieces(chess.board, true);
     vector<char> blackMissing = MissingPieces(chess.board, false);
@@ -267,6 +270,14 @@ void DrawChessPanel(
         youCaptured = whiteMissing;
         opponentCaptured = blackMissing;
     }
+    else if (chess.spectating)
+    {
+        // Spectators use White's normal board orientation. The upper row
+        // therefore shows pieces captured by Black, and the lower row shows
+        // pieces captured by White.
+        opponentCaptured = whiteMissing;
+        youCaptured = blackMissing;
+    }
 
     DrawCapturedRow(
         opponentCaptured,
@@ -281,6 +292,7 @@ void DrawChessPanel(
 
     if (
         chess.active &&
+        !chess.spectating &&
         !interactionsBlocked &&
         IsMouseInside(board) &&
         IsMouseButtonPressed(MOUSE_BUTTON_LEFT)
@@ -518,7 +530,9 @@ void DrawChessPanel(
         youCaptured,
         board.x,
         board.y + board.height + 27,
-        "YOU WON"
+        chess.spectating
+            ? chess.whitePlayer + " WON"
+            : "YOU WON"
     );
 
     // ========================================================
@@ -552,6 +566,20 @@ void DrawChessPanel(
     DrawText("STATUS", (int)infoX, (int)board.y + 166, 15, JENG_YELLOW);
     DrawText(chess.status.c_str(), (int)infoX, (int)board.y + 191, 14, TEXT_MUTED);
 
+    if (!chess.spectators.empty())
+    {
+        string spectatorText =
+            "Watching: " +
+            to_string(chess.spectators.size());
+        DrawText(
+            spectatorText.c_str(),
+            (int)infoX,
+            (int)board.y + 213,
+            11,
+            TEXT_MUTED
+        );
+    }
+
     if (!chess.active)
     {
         Rectangle challengeButton = {
@@ -573,23 +601,63 @@ void DrawChessPanel(
             )
         )
         {
-            OpenCommandPrompt(
-                app.commandPopup,
-                "CHESS",
-                "Who do you want to challenge?",
-                "/chess",
-                {"Opponent username"}
-            );
+            OpenPlayerInvite(app, GameView::CHESS);
         }
     }
-    else
+    else if (chess.spectating)
     {
-        Rectangle resignButton = {
+        Rectangle leaveButton = {
             infoX,
             board.y + 235,
             170,
             44
         };
+
+        if (
+            !interactionsBlocked &&
+            DrawButton(
+                leaveButton,
+                "LEAVE SPECTATING",
+                PANEL_LIGHT,
+                JENG_RED,
+                TEXT_MAIN,
+                12
+            )
+        )
+        {
+            NetSendLine("CHESS_SPECTATE_LEAVE");
+        }
+    }
+    else
+    {
+        Rectangle inviteButton = {
+            infoX,
+            board.y + 235,
+            170,
+            44
+        };
+
+        Rectangle resignButton = {
+            infoX,
+            board.y + 289,
+            170,
+            44
+        };
+
+        if (
+            !interactionsBlocked &&
+            DrawButton(
+                inviteButton,
+                "INVITE SPECTATOR",
+                JENG_RED,
+                Color{255, 80, 80, 255},
+                WHITE,
+                12
+            )
+        )
+        {
+            OpenPlayerInvite(app, GameView::CHESS);
+        }
 
         if (
             !interactionsBlocked &&

@@ -51,7 +51,11 @@ void DrawCommandPopup(AppState& app)
     );
 
     const float panelWidth = 600.0f;
-    const float panelHeight = 235.0f + popup.fieldCount * 76.0f;
+    const auto descriptionLines = WrapUIMessage(popup.description, 17, (int)panelWidth - 56, 3);
+    const auto errorLines = WrapUIMessage(popup.error, 14, (int)panelWidth - 56, 3);
+    const float descriptionExtra = std::max(0, (int)descriptionLines.size() - 1) * 23.0f;
+    const float errorHeight = errorLines.empty() ? 0.0f : errorLines.size() * 19.0f + 12.0f;
+    const float panelHeight = 235.0f + popup.fieldCount * 76.0f + descriptionExtra + errorHeight;
 
     Rectangle panel = {
         WINDOW_WIDTH / 2.0f - panelWidth / 2.0f,
@@ -63,33 +67,15 @@ void DrawCommandPopup(AppState& app)
     DrawRectangleRounded(panel, 0.04f, 10, PANEL);
     DrawRectangleRoundedLinesEx(panel, 0.04f, 10, 2.0f, JENG_YELLOW);
 
-    DrawText(
-        popup.title.c_str(),
-        (int)panel.x + 28,
-        (int)panel.y + 24,
-        28,
-        JENG_RED
-    );
+    DrawFittedText(popup.title, {panel.x + 28, panel.y + 24, panel.width - 56, 34}, 28, JENG_RED);
+    DrawUILines(descriptionLines, panel.x + 28, panel.y + 67, 17, 23, TEXT_MUTED);
 
-    DrawText(
-        popup.description.c_str(),
-        (int)panel.x + 28,
-        (int)panel.y + 67,
-        17,
-        TEXT_MUTED
-    );
-
-    float fieldStartY = panel.y + 105.0f;
+    float fieldStartY = panel.y + 105.0f + descriptionExtra;
 
     for (int i = 0; i < popup.fieldCount; i++)
     {
-        DrawText(
-            popup.fieldLabels[i].c_str(),
-            (int)panel.x + 28,
-            (int)fieldStartY + i * 76,
-            15,
-            JENG_YELLOW
-        );
+        DrawFittedText(popup.fieldLabels[i],
+            {panel.x + 28, fieldStartY + i * 76, panel.width - 56, 18}, 15, JENG_YELLOW);
 
         Rectangle fieldBox = {
             panel.x + 28,
@@ -113,9 +99,12 @@ void DrawCommandPopup(AppState& app)
         );
 
         const string& value = popup.fieldValues[i];
+        string visibleValue = value;
+        while (!visibleValue.empty() && MeasureText(visibleValue.c_str(), 17) > fieldBox.width - 30)
+            visibleValue.erase(visibleValue.begin());
 
         DrawText(
-            value.empty() ? "Type here..." : value.c_str(),
+            value.empty() ? "Type here..." : visibleValue.c_str(),
             (int)fieldBox.x + 12,
             (int)fieldBox.y + 11,
             17,
@@ -127,7 +116,7 @@ void DrawCommandPopup(AppState& app)
             ((int)(GetTime() * 2) % 2) == 0
         )
         {
-            int textWidth = MeasureText(value.c_str(), 17);
+            int textWidth = MeasureText(visibleValue.c_str(), 17);
             DrawRectangle(
                 (int)fieldBox.x + 13 + textWidth,
                 (int)fieldBox.y + 8,
@@ -221,16 +210,8 @@ void DrawCommandPopup(AppState& app)
         cancelHover ? BG : TEXT_MAIN
     );
 
-    if (!popup.error.empty())
-    {
-        DrawText(
-            popup.error.c_str(),
-            (int)panel.x + 28,
-            (int)panel.y + (int)panel.height - 48,
-            14,
-            ERROR_COLOR
-        );
-    }
+    DrawUILines(errorLines, panel.x + 28,
+        panel.y + panel.height - 60 - errorHeight, 14, 19, ERROR_COLOR);
 
     bool sendRequested =
         readyToSend &&
